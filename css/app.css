@@ -124,7 +124,8 @@ code { font-family: var(--mono); font-size: 0.92em; }
   border-radius: 7px;
   white-space: nowrap;
 }
-#leaveRowBtn {
+#leaveRowBtn,
+#enterRowBtn {
   position: fixed;
   z-index: 25;
   left: 50%;
@@ -139,7 +140,8 @@ code { font-family: var(--mono); font-size: 0.92em; }
   cursor: pointer;
   box-shadow: 0 8px 28px rgba(53, 196, 255, 0.4);
 }
-#leaveRowBtn:hover { background: #5fd0ff; }
+#leaveRowBtn:hover,
+#enterRowBtn:hover { background: #5fd0ff; }
 /* Row / rack sliders: left side of the screen, row view only. */
 #rowNav {
   position: fixed;

@@ -36,7 +36,7 @@ at this directory.
 |---|---|
 | **Orbit** (default) | drag rotates · wheel zooms · right-drag / Shift-drag pans · click inspects |
 | **Walk** | W A S D move · Shift run · E / Q up and down · mouse looks · click inspects (you collide with racks) |
-| **Rack row view** | double-click a rack or device (or “Enter row mode” in the panel) for a straight-on orthographic view of the whole row, with every device labeled |
+| **Rack row view** | double-click a rack or device (or the big “Enter row mode” button, shown while a rack is selected) for a straight-on orthographic view of the whole row, with every device labeled |
 | inside the row view | **wheel** scrolls rack by rack (centered rack in a floating header) · **Shift+wheel / pinch** zooms · click a rack to switch to it · **drag / the Orbit button** orbits around the row while row mode stays on · **← Leave row mode** button or **Esc / V** exits |
 | row sliders (left) | **Row** jumps between the floor's rows (keeping your rack column) with a camera flight — crane up to a 45° top view, pan across, descend, and rotate to face the new row · **Rack** jumps between the row's racks · **Zoom** sets the magnification (px per U) · **Flight** sets the flight length (1–10 s, 3 s default) |
 | common | **V** toggles walk/orbit · **Esc** deselects · floor buttons in the header jump between floors · **Fade** (on by default) dims device labels by distance from the centered rack |

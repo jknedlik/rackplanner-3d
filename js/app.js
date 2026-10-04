@@ -928,6 +928,7 @@ function select(ent) {
       world.focusId = null;
       fillAll();
     }
+    syncEnterRowBtn();
     return;
   }
   if (ent.kind === 'rack') openRackId = ent.entry.rack.id;
@@ -943,6 +944,7 @@ function select(ent) {
     fillAll();
   }
   focusEntity(ent);
+  syncEnterRowBtn();
 }
 
 /* --------------------------------------------------------------- elevation
@@ -1132,7 +1134,6 @@ function rackHTML(re) {
       ${row('Weight', rt.weightKg ? `${fmtKG(st.weightKg)} / ${fmtKG(rt.weightKg)}${st.overWeight ? ' <b class="over">over</b>' : ''}` : fmtKG(st.weightKg))}
       ${row('Devices', `${st.count} devices${rt.sideSlots ? `, ${st.sideUsed} / ${rt.sideSlots} side slots` : ''}`)}
     </dl>
-    <button class="linkish" data-act="rackview" data-id="${re.rack.id}">⌖ Enter row mode</button>
     <h3>Front view</h3>
     ${elevationSVG(re)}`;
 }
@@ -1159,15 +1160,10 @@ inspBody.addEventListener('click', (ev) => {
     if (dv) select({ kind: 'device', entry: dv, box: entityBox('device', dv) });
     return;
   }
-  const btn = ev.target.closest('button[data-act]');
+  const btn = ev.target.closest('button[data-act="rack"]');
   if (!btn) return;
-  const id = btn.dataset.id;
-  if (btn.dataset.act === 'rack' || btn.dataset.act === 'rackview') {
-    const re = world.layout.rackBy.get(id);
-    if (!re) return;
-    select({ kind: 'rack', entry: re, box: entityBox('rack', re) });
-    if (btn.dataset.act === 'rackview') enterRackView(re);
-  }
+  const re = world.layout.rackBy.get(btn.dataset.id);
+  if (re) select({ kind: 'rack', entry: re, box: entityBox('rack', re) });
 });
 inspBody.addEventListener('mouseover', (ev) => {
   const t = ev.target.closest('.eldev');
@@ -1234,6 +1230,7 @@ function setProject(p, source) {
   elevRows.clear();
   inspector.hidden = true;
   tooltip.hidden = true;
+  syncEnterRowBtn();
 
   $('planName').textContent = p.name + (source && source !== p.name ? ` — ${source}` : '');
   measureBar(); // the header content (and possibly height) changed
@@ -1392,6 +1389,14 @@ $('fadeBtn').addEventListener('click', () => {
   }
 });
 $('leaveRowBtn').addEventListener('click', () => exitRackView());
+// The big “Enter row mode” button — same spot and style as “Leave row
+// mode”: shown whenever a rack is selected (and row mode is closed).
+function syncEnterRowBtn() {
+  $('enterRowBtn').hidden = !(selected && selected.kind === 'rack' && !rackView);
+}
+$('enterRowBtn').addEventListener('click', () => {
+  if (selected && selected.kind === 'rack') enterRackView(selected.entry);
+});
 
 /* ----------------------------------------------- rack row view (ortho) */
 
@@ -1707,6 +1712,7 @@ function enterRackView(re, flyDur = 0) {
   buildRowLabels();
   syncRowNav();
   $('leaveRowBtn').hidden = false;
+  syncEnterRowBtn();
 }
 
 const easeIO = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2); // easeInOutQuad
@@ -1798,6 +1804,7 @@ function exitRackView(keepCamera = false) {
   overlayEl.innerHTML = '';
   overlayItems = [];
   $('leaveRowBtn').hidden = true;
+  syncEnterRowBtn();
   syncRowNav();
   for (const { m } of rowLabels) {
     world.group.remove(m);
