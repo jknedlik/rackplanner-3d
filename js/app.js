@@ -46,7 +46,22 @@ const inspBody = $('inspBody');
 /* --------------------------------------------------------------- renderer */
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+// The render resolution follows the display, but the frame loop adapts it
+// to what the GPU can actually sustain: pixelRatio steps down when frames
+// run long and back up when there is headroom again (see frame()).
+let pixelCap = Math.min(window.devicePixelRatio, 2);
+let pixelRatio = pixelCap;
+const applyPixelRatio = () => {
+  renderer.setPixelRatio(pixelRatio);
+  // A reduced resolution softens every texture, not just the labels — keep
+  // it visible instead of letting the view silently go blurry.
+  const rs = $('resStat');
+  if (pixelRatio < pixelCap - 1e-3) {
+    rs.hidden = false;
+    rs.textContent = `render ${pixelRatio.toFixed(2)}×`;
+  } else rs.hidden = true;
+};
+applyPixelRatio();
 const scene = new THREE.Scene();
 // Matte studio backdrop: a soft vertical gradient, no sheen.
 {
@@ -70,8 +85,12 @@ camera.rotation.order = 'YXZ';
 const orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.05, 400);
 let orthoH = 8; // visible height in meters
 const ROW_VIEW_DIST = 2.6; // how far the row view camera stands from the row
+let lastOrthoH = 0, lastOrthoA = 0; // sizeOrtho() only works when these change
 function sizeOrtho() {
   const a = camera.aspect || 1;
+  if (orthoH === lastOrthoH && a === lastOrthoA) return;
+  lastOrthoH = orthoH;
+  lastOrthoA = a;
   orthoCam.left = (-a * orthoH) / 2;
   orthoCam.right = (a * orthoH) / 2;
   orthoCam.top = orthoH / 2;
@@ -113,6 +132,30 @@ const CENTER = new THREE.Vector2(0, 0);
 const pointer = new THREE.Vector2(0, 0);
 let pointerPx = { x: 0, y: 0 };
 let dragging = null; // { btn, x, y }
+// Render/hover bookkeeping: the scene re-renders only when something
+// visible changed, and the hover raycast (the most expensive per-frame
+// pick over every instance mesh) runs only when the pointer or camera
+// actually moved — never while the view is at rest.
+let needsRender = true;
+let hoverDirty = true; // pointer or camera moved since the last raycast
+let pointerDirty = false; // the pointer itself moved → raycast this frame
+let camRayAlt = false; // camera-only movement raycasts on alternate frames (30 Hz)
+let hoverKey = null; // identity of the entity the outline/tooltip show
+let lastTipHTML = null;
+let tipX = -1, tipY = -1, tipW = 0, tipH = 0, tipMeasuredFor = null;
+const camSig = { x: 0, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 0 };
+let lastSeenOrthoH = 0;
+let perfAcc = 0, perfN = 0, perfWarm = 0; // frame-time stats for adaptive resolution
+
+/** True when the camera's position or orientation differs from the last frame. */
+function cameraMoved(cam) {
+  const p = cam.position, q = cam.quaternion, c = camSig;
+  if (p.x !== c.x || p.y !== c.y || p.z !== c.z || q.x !== c.qx || q.y !== c.qy || q.z !== c.qz || q.w !== c.qw) {
+    c.x = p.x; c.y = p.y; c.z = p.z; c.qx = q.x; c.qy = q.y; c.qz = q.z; c.qw = q.w;
+    return true;
+  }
+  return false;
+}
 
 /* --------------------------------------------------------------- labels */
 
@@ -127,13 +170,19 @@ let dragging = null; // { btn, x, y }
 // two mips there and looked soft).
 const LABEL_SS = 6;
 
-/** A label canvas: `w × h` logical px, drawn at LABEL_SS× internal resolution. */
-function labelCanvas(w, h) {
+/**
+ * A label canvas: `w × h` logical px, drawn at `ss ×` internal resolution
+ * (default LABEL_SS). Per-label ss: the textures are already 2–9× the
+ * on-screen size at row-view distance, so extra resolution is only spent
+ * where a label is read up close (walking distance) — blanket oversampling
+ * would burn gigabytes of GPU memory for nothing.
+ */
+function labelCanvas(w, h, ss = LABEL_SS) {
   const cv = document.createElement('canvas');
-  cv.width = w * LABEL_SS;
-  cv.height = h * LABEL_SS;
+  cv.width = w * ss;
+  cv.height = h * ss;
   const c = cv.getContext('2d');
-  c.scale(LABEL_SS, LABEL_SS); // drawing code stays in logical px
+  c.scale(ss, ss); // drawing code stays in logical px
   return [cv, c];
 }
 
@@ -572,6 +621,8 @@ const writeDev = (im, j, dv) => put(im, j, dv.pos[0], dv.pos[1], dv.pos[2], dv.s
  */
 function fillAll() {
   const W = world;
+  needsRender = true; // instance matrices and label opacities changed
+  hoverDirty = true; // the pickable instances changed under the pointer
   const fid = W.focusId;
   const keep = W.keepSet; // row view: the whole row stays solid
   const hide = !!rackView; // row view: no racks but the row's
@@ -740,22 +791,51 @@ function setOutline(line, box) {
 
 function updateHover(cam) {
   if (!world) return;
-  // Hovering the elevation view drives the 3D highlight; otherwise raycast.
+  // Hovering the elevation view drives the 3D highlight; otherwise raycast —
+  // but only when the pointer or the camera actually moved: a full pick over
+  // every instance mesh is the most expensive thing we do per frame. It is
+  // skipped entirely while the view is at rest, and while the user is
+  // mid-drag, when the tooltip would just get in the way. Camera-only
+  // movement raycasts on alternate frames (30 Hz is plenty for the crosshair
+  // and for the camera easing after a drag).
   if (elHover) hovered = { kind: 'device', entry: elHover, box: entityBox('device', elHover) };
-  else {
+  else if (dragging && dragMoved) hovered = null; // a real drag, not a click
+  else if (hoverDirty && (pointerDirty || (camRayAlt = !camRayAlt))) {
     raycaster.far = view.mode === 'walk' ? 14 : Infinity;
     raycaster.setFromCamera(view.mode === 'walk' ? CENTER : pointer, cam);
     const hits = raycaster.intersectObjects(world.pickables, false);
     hovered = hits.length ? pickEntity(hits[0]) : null;
+    hoverDirty = false;
   }
-  if (hovered) setOutline(world.hover, hovered.box);
-  else world.hover.visible = false;
-  // Keep the open elevation row in step with the 3D hover.
-  if (openRackId && elevRows.size)
-    for (const [id, el] of elevRows) el.classList.toggle('hl', !!(hovered && (hovered.kind === 'device' || hovered.kind === 'reserved') && hovered.entry.d.id === id));
-
-  // Tooltip.
-  if (hovered) {
+  pointerDirty = false; // consumed (it is only ever set together with hoverDirty)
+  // The mode is part of the key: the same entity shows a different tooltip
+  // style in walk vs orbit mode.
+  const key = !hovered
+    ? null
+    : (view.mode === 'walk' ? 'w:' : 'o:') + (hovered.kind === 'device' || hovered.kind === 'reserved'
+      ? 'd' + hovered.entry.d.id
+      : hovered.kind === 'rack' ? 'r' + hovered.entry.rack.id : 'f' + hovered.entry.floor.id);
+  // The orbit tooltip follows the cursor; everything else is static per
+  // hover entity, so an unchanged key means an unchanged frame.
+  const tipFollow = view.mode === 'orbit' && (pointerPx.x !== tipX || pointerPx.y !== tipY);
+  if (key === hoverKey && !tipFollow) return;
+  const changed = key !== hoverKey;
+  hoverKey = key;
+  if (changed) {
+    needsRender = true; // the 3D outline line appears / moves / disappears
+    if (!hovered) {
+      world.hover.visible = false;
+      lastTipHTML = null;
+      tooltip.hidden = true;
+      if (openRackId && elevRows.size) for (const [id, el] of elevRows) el.classList.remove('hl');
+      return;
+    }
+    setOutline(world.hover, hovered.box);
+    // Keep the open elevation row in step with the 3D hover.
+    if (openRackId && elevRows.size) {
+      const isDev = hovered.kind === 'device' || hovered.kind === 'reserved';
+      for (const [id, el] of elevRows) el.classList.toggle('hl', isDev && hovered.entry.d.id === id);
+    }
     const e = hovered.entry;
     let text;
     if (hovered.kind === 'device' || hovered.kind === 'reserved') {
@@ -765,19 +845,31 @@ function updateHover(cam) {
       text = `<b>${esc(d.name)}</b> · ${esc(t.label)} · ${esc(rn(e.rack.rack.name))} ${pos}`;
     } else if (hovered.kind === 'rack') {
       const st = e.stats;
-      text = `<b>${esc(rn(e.rack.name))}</b> · ${e.rackType.name} · ${st.used}/${st.units} U · ${fmtKW(st.powerW)}`;
+      text = `<b>${esc(rn(e.rack.name))}</b> · ${esc(e.rackType.name)} · ${st.used}/${st.units} U · ${fmtKW(st.powerW)}`;
     } else {
       const st = M.statsWithin(project, e.floor.id);
       text = `<b>${esc(e.floor.name)}</b> · ${plural(st.racks, 'rack')} · ${plural(st.count, 'device')}`;
     }
-    tooltip.innerHTML = text;
+    if (lastTipHTML !== text) {
+      lastTipHTML = text;
+      tooltip.innerHTML = text; // was: every frame while hovering (reflow)
+      tipMeasuredFor = null;
+    }
     tooltip.hidden = false;
     tooltip.classList.toggle('walk', view.mode === 'walk');
-    if (view.mode === 'orbit') {
-      tooltip.style.left = clamp(pointerPx.x + 16, 8, innerWidth - tooltip.offsetWidth - 8) + 'px';
-      tooltip.style.top = clamp(pointerPx.y + 18, 8, innerHeight - tooltip.offsetHeight - 40) + 'px';
+  }
+  if (!hovered) return;
+  if (view.mode === 'orbit') {
+    if (tipMeasuredFor !== key) { tipMeasuredFor = key; tipW = tooltip.offsetWidth; tipH = tooltip.offsetHeight; }
+    const x = clamp(pointerPx.x + 16, 8, innerWidth - tipW - 8);
+    const y = clamp(pointerPx.y + 18, 8, innerHeight - tipH - 40);
+    if (x !== tipX || y !== tipY) {
+      tipX = x;
+      tipY = y;
+      tooltip.style.left = x + 'px';
+      tooltip.style.top = y + 'px';
     }
-  } else tooltip.hidden = true;
+  }
 }
 
 function focusEntity(ent) {
@@ -798,6 +890,8 @@ function focusIdFor(ent) {
 
 function select(ent) {
   selected = ent;
+  needsRender = true; // the selection outline changed
+  hoverDirty = true; // elHover is cleared below; the 3D hover may be stale
   if (selected) setOutline(world.sel, selected.box);
   else world.sel.visible = false;
   elHover = null;
@@ -1056,7 +1150,10 @@ inspBody.addEventListener('mouseover', (ev) => {
 });
 inspBody.addEventListener('mouseout', (ev) => {
   const t = ev.target.closest('.eldev');
-  if (t && !t.contains(ev.relatedTarget)) elHover = null;
+  if (t && !t.contains(ev.relatedTarget)) {
+    elHover = null;
+    hoverDirty = true; // resume 3D hovering
+  }
 });
 $('inspClose').addEventListener('click', () => select(null));
 
@@ -1093,6 +1190,10 @@ function buildLegend() {
 
 function setProject(p, source) {
   project = p;
+  needsRender = true;
+  hoverDirty = true;
+  hoverKey = null;
+  lastTipHTML = null;
   rackView = null;
   overlayEl.hidden = true;
   overlayEl.innerHTML = '';
@@ -1110,6 +1211,7 @@ function setProject(p, source) {
   tooltip.hidden = true;
 
   $('planName').textContent = p.name + (source && source !== p.name ? ` — ${source}` : '');
+  measureBar(); // the header content (and possibly height) changed
   const t = M.statsWithin(p, null);
   $('planInfo').textContent = `${plural(p.floors.length, 'floor')} · ${plural(t.racks, 'rack')} · ${plural(t.count, 'device')} · ${fmtKW(t.powerW)}`;
   buildFloors();
@@ -1213,6 +1315,8 @@ function lockPointer() {
 
 function setMode(mode) {
   view.mode = mode;
+  needsRender = true;
+  hoverDirty = true; // hover params differ per mode (crosshair vs pointer)
   $('orbitBtn').classList.toggle('active', mode === 'orbit');
   $('walkBtn').classList.toggle('active', mode === 'walk');
   crosshair.hidden = mode !== 'walk';
@@ -1257,7 +1361,10 @@ $('walkBtn').addEventListener('click', () => {
 $('fadeBtn').addEventListener('click', () => {
   chipFade = !chipFade;
   $('fadeBtn').classList.toggle('active', chipFade);
-  if (rackView) updateRowLabelsFade();
+  if (rackView) {
+    needsRender = true; // label opacities changed
+    updateRowLabelsFade();
+  }
 });
 $('leaveRowBtn').addEventListener('click', () => exitRackView());
 
@@ -1276,6 +1383,7 @@ function addOverlayItem(el, anchor, opts = {}) {
 function buildRackOverlay(re) {
   overlayEl.innerHTML = '';
   overlayItems = [];
+  overlayStale = true; // a fresh header element needs positioning
   const st = re.stats;
   const head = document.createElement('div');
   head.className = 'rk-head';
@@ -1329,8 +1437,13 @@ function updateRowLabelsFade() {
     m.material.opacity = chipFade ? Math.max(0.1, 1 - 0.3 * Math.abs(i - rackView.activeIdx)) : 1;
 }
 
+let barH = 0; // header height, re-measured on resize / plan change
+const measureBar = () => (barH = $('bar').offsetHeight);
+let overlayStale = true; // the overlay moved since the last positioning
 function updateOverlay(cam) {
-  const minTop = $('bar').offsetHeight + 10;
+  if (!overlayStale) return; // camera and zoom at rest → nothing to move
+  overlayStale = false;
+  const minTop = barH + 10;
   for (const it of overlayItems) {
     _t3.copy(it.anchor).project(cam);
     if (_t3.z > 1) {
@@ -1666,6 +1779,8 @@ window.addEventListener('pointermove', (e) => {
 });
 canvas.addEventListener('pointermove', (e) => {
   pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  pointerDirty = true; // the hover must track the cursor this frame
+  hoverDirty = true;
   if (!dragging || view.mode !== 'orbit') return;
   const dx = e.clientX - dragging.x;
   const dy = e.clientY - dragging.y;
@@ -1680,13 +1795,17 @@ canvas.addEventListener('pointermove', (e) => {
     view.phi = clamp(view.phi - dy * 0.005, 0.05, 1.5707);
   } else {
     const k = view.radius * 0.0012;
-    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
-    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
+    const right = _right.setFromMatrixColumn(camera.matrix, 0);
+    const up = _up.setFromMatrixColumn(camera.matrix, 1);
     view.goal.addScaledVector(right, -dx * k).addScaledVector(up, dy * k);
     view.target.copy(view.goal);
   }
 });
-const endDrag = () => (dragging = null);
+const endDrag = () => {
+  dragging = null;
+  hoverDirty = true; // hover was suppressed during the drag — pick again
+  pointerDirty = true;
+};
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
 canvas.addEventListener('click', (e) => {
@@ -1794,6 +1913,10 @@ function updateOrbit(dt) {
   const damp = 1 - Math.exp(-dt * 9);
   view.target.lerp(view.goal, damp);
   view.radius += (view.goalR - view.radius) * damp;
+  // Snap when the easing is visually done, so the camera can come to rest —
+  // on-demand rendering needs a fixed point (the easing is asymptotic).
+  if (view.target.distanceToSquared(view.goal) < 1e-8) view.target.copy(view.goal);
+  if (Math.abs(view.goalR - view.radius) < 1e-4) view.radius = view.goalR;
   const sp = Math.sin(view.phi);
   camera.position.set(
     view.target.x + view.radius * sp * Math.sin(view.theta),
@@ -1806,15 +1929,21 @@ function updateOrbit(dt) {
 /* --------------------------------------------------------------- run */
 
 function resize() {
-  // Re-read the pixel ratio: it can change on resize (e.g. the window is
-  // moved to a denser monitor), so the canvas must follow the new resolution.
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  // Re-read the pixel ratio cap: it can change on resize (e.g. the window is
+  // moved to a denser monitor) — the adaptive value stays below it.
+  pixelCap = Math.min(window.devicePixelRatio, 2);
+  if (pixelRatio > pixelCap) pixelRatio = pixelCap;
+  applyPixelRatio();
   const w = innerWidth;
   const h = innerHeight;
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   sizeOrtho();
+  measureBar();
+  overlayStale = true;
+  needsRender = true;
+  if (rackView) syncRowNav(); // the slider panel re-centers, the floor chip follows
 }
 window.addEventListener('resize', resize);
 
@@ -1829,11 +1958,39 @@ function frame(now) {
       updateRackView(dt);
       cam = orthoCam;
     } else updateOrbit(dt); // free orbit around the row; row mode stays on
-    updateOverlay(cam);
   } else if (view.mode === 'walk') updateWalk(dt);
   else updateOrbit(dt);
+  if (cameraMoved(cam) || orthoH !== lastSeenOrthoH) {
+    lastSeenOrthoH = orthoH;
+    needsRender = true;
+    hoverDirty = true; // the scene under the pointer/crosshair moved
+    if (rackView) overlayStale = true;
+  }
   updateHover(cam);
-  renderer.render(scene, cam);
+  // Adaptive resolution: after a short warm-up, look at the average frame
+  // time every ~50 frames and step the render scale down when it runs long
+  // (≈45 fps) or back up when there is headroom (≈60 fps). It never goes
+  // more than half a step below native — on a 2× display that is 1.5, never
+  // 1.0 — because below that every texture reads as blurry, which is worse
+  // than a slightly lower framerate.
+  perfWarm += dt;
+  perfAcc += dt;
+  perfN++;
+  if (perfWarm > 2 && perfN >= 50) {
+    const avg = (perfAcc / perfN) * 1000;
+    perfAcc = 0;
+    perfN = 0;
+    const floor = Math.max(1, pixelCap - 0.5);
+    if (avg > 22 && pixelRatio > floor) { pixelRatio = Math.max(floor, pixelRatio - 0.25); applyPixelRatio(); needsRender = true; }
+    else if (avg < 16 && pixelRatio < pixelCap) { pixelRatio = Math.min(pixelCap, pixelRatio + 0.25); applyPixelRatio(); needsRender = true; }
+  }
+  // On-demand rendering: the same frame would be wasted GPU work (and heat,
+  // which is what throttles sustained framerates).
+  if (needsRender) {
+    needsRender = false;
+    if (rackView) updateOverlay(cam);
+    renderer.render(scene, cam);
+  }
 }
 
 async function init() {

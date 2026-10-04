@@ -199,8 +199,9 @@ plans/example-big.json  the “Big example” (2 × 16 racks, 306 devices)
 Rendering uses `InstancedMesh` (one per part: rack frames 12 boxes/rack —
 closed cabinet: plinth, 4 posts, 4 rails, back panel, 2 side panels —
 side channel strips, slot boxes per side slot, device bodies, lit face
-strips, side devices, reserved, soft red over-budget glow shells; each part has a
-solid + ghost pair for selection focus) plus canvas-texture label planes
+strips, side devices, reserved, soft red over-budget glow shells; each
+part has a solid + ghost pair for selection focus) plus canvas-texture
+label planes
 (floor labels, per-rack panels and vertical name tags) — fixed in front of
 the cabinet (2–3 cm proud of the front face), rotated once with the rack's
 dir, never billboarded toward the camera; double-sided so they stay faintly
@@ -210,6 +211,29 @@ individual meshes, each with its own procedural canvas marble texture
 continuously, never tiling. The scene background is a matte vertical
 gradient. Picking maps `instanceId` back to plan entities through
 `world.pick`; slabs carry their floor in `userData.floor`.
+
+## Performance model (app.js frame loop)
+
+The loop renders **on demand**: `frame()` calls `renderer.render` only when
+`needsRender` is set — camera moved, `fillAll` / `select` / `setProject` /
+`setMode` ran, the hover outline changed, a resize happened, … Anything
+that mutates scene-visible state must set `needsRender` (and `hoverDirty`
+when the pickable instances or the hover-relevant state changed), or the
+view will go stale. Because on-demand rendering needs a fixed point, the
+orbit camera **snaps to its goal within 0.1 mm** — the exponential ease is
+asynchronous, without the snap the camera would "move" forever. The hover
+raycast (a full pick over every instance mesh — the most expensive
+per-frame work) runs only when the pointer or the camera moved: pointer
+moves raycast same-frame, camera-only movement on alternate frames
+(30 Hz), and hover is suppressed entirely while dragging. Render
+resolution is **adaptive**: after a 2 s warm-up the average frame time is
+checked every ~50 frames and the pixel ratio steps in 0.25 increments
+(down above ~22 ms/frame, up below ~16 ms), capped at
+`min(devicePixelRatio, 2)` and **floored at `max(1, cap − 0.5)`** — it
+never goes more than half a step below native (a 2× display drops to 1.5,
+never 1.0), because below that every texture reads as blurry, which is
+worse than a slightly lower framerate. Any reduction is shown in the
+footer (`#resStat`: “render 1.50×”) instead of silently softening the view.
 
 ## Commands
 
