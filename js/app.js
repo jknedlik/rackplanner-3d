@@ -1396,10 +1396,15 @@ $('leaveRowBtn').addEventListener('click', () => exitRackView());
 // The big “Enter row mode” button — same spot and style as “Leave row
 // mode”: shown whenever a rack is selected (and row mode is closed).
 function syncEnterRowBtn() {
-  $('enterRowBtn').hidden = !(selected && selected.kind === 'rack' && !rackView);
+  const k = selected ? selected.kind : null;
+  $('enterRowBtn').hidden = !(k && (k === 'rack' || k === 'device') && !rackView);
 }
 $('enterRowBtn').addEventListener('click', () => {
-  if (selected && selected.kind === 'rack') enterRackView(selected.entry);
+  if (!selected || rackView) return;
+  const k = selected.kind;
+  if (k !== 'rack' && k !== 'device') return;
+  // A device sends the row mode into its rack's row.
+  enterRackView(k === 'rack' ? selected.entry : selected.entry.rack);
 });
 
 /* ----------------------------------------------- rack row view (ortho) */

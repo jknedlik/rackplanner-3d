@@ -13,8 +13,9 @@ slots on the right), with rows hoverable/clickable and hover-synced with the
 3D view.
 
 There is also a **rack row view** camera mode: double-click a rack or
-device (or the big “Enter row mode” button, shown while a rack is selected
-and styled like “Leave row mode”) and the view animates to an
+device (or the big “Enter row mode” button, shown while a rack or one of
+its devices is selected and styled like “Leave row mode”) and the view
+animates to an
 **orthographic** camera standing in front of the rack's **whole row** —
 each rack looks exactly like the 2D elevation. The row view renders at a
 **fixed on-screen scale** (CSS px per meter, `ROW_PX_PER_M` — the Zoom
