@@ -218,7 +218,8 @@ const fmtW = (w) => (w >= 10000 ? (w / 1000).toFixed(0) + ' kW' : w >= 1000 ? (w
 
 /** Bottom panel: the rack name plus three usage bars (energy / weight / units). */
 function rackPanel(name, st) {
-  const [cv, c] = labelCanvas(256, 120);
+  // Read at walking distance — 8× so it stays crisp up close (2048×960).
+  const [cv, c] = labelCanvas(256, 120, 8);
   c.beginPath();
   rr(c, 1, 1, 254, 118, 10);
   c.fillStyle = 'rgba(12,17,26,0.88)';
@@ -229,10 +230,10 @@ function rackPanel(name, st) {
   c.lineWidth = 2;
   c.stroke();
   c.fillStyle = '#e8eef7';
-  c.font = '600 21px system-ui, sans-serif';
+  c.font = '400 24px system-ui, sans-serif';
   c.textAlign = 'center';
   c.textBaseline = 'middle';
-  c.fillText(name, 128, 17, 236);
+  c.fillText(name, 128, 18, 236);
   const rows = [
     { y: 38, sym: 'spark',
       frac: st.powerBudgetW > 0 ? st.powerW / st.powerBudgetW : 0,
@@ -252,7 +253,7 @@ function rackPanel(name, st) {
     if (row.sym === 'spark') drawSpark(c, 10, y + 2, 14);
     else {
       c.fillStyle = '#9fb0c5';
-      c.font = '700 12px system-ui, sans-serif';
+      c.font = '400 14px system-ui, sans-serif';
       c.textAlign = 'left';
       c.textBaseline = 'middle';
       c.fillText(row.sym, 8, y + 10);
@@ -268,43 +269,45 @@ function rackPanel(name, st) {
       c.fill();
     }
     c.fillStyle = '#ffffff';
-    c.font = '600 12px system-ui, sans-serif';
+    c.font = '400 14px system-ui, sans-serif';
     c.textAlign = 'center';
     c.textBaseline = 'middle';
     c.fillText(row.text, 140, y + 10, 208);
   }
-  return labelPlane(cv, 0.56, 0.262); // fits inside the 0.6 m rack width
+  // ~12% smaller than the 0.6 m cabinet width: the same canvas on a smaller
+  // quad raises the text density and reads sharper.
+  return labelPlane(cv, 0.49, 0.229);
 }
 
 /** Vertical rack name tag: one letter per line, running down the rack's front-left. */
 function rackNameTag(name) {
   const LW = 40; // px per letter row
   const LH = name.length * LW + 14;
-  const [cv, c] = labelCanvas(44, LH);
+  const [cv, c] = labelCanvas(44, LH, 8); // read up close along the cabinet edge
   c.beginPath();
   rr(c, 1, 1, 42, LH - 2, 8);
   c.fillStyle = 'rgba(12,17,26,0.55)';
   c.fill();
   c.fillStyle = '#e8eef7';
-  c.font = '700 26px system-ui, sans-serif';
+  c.font = '400 30px system-ui, sans-serif';
   c.textAlign = 'center';
   c.textBaseline = 'middle';
   for (let i = 0; i < name.length; i++) c.fillText(name[i], 22, 10 + LW / 2 + i * LW);
-  const w = 0.055; // fits the 6 cm strip between the cabinet edge (0.30) and the device edge (0.24)
+  const w = 0.048; // fits the 6 cm strip between the cabinet edge (0.30) and the device edge (0.24)
   return labelPlane(cv, w, (w * cv.height) / cv.width);
 }
 
 function floorLabel(text) {
   const [cv, c] = labelCanvas(512, 128);
   c.fillStyle = '#9fc2ff';
-  c.font = '700 64px system-ui, sans-serif';
+  c.font = '400 64px system-ui, sans-serif';
   c.textAlign = 'center';
   c.textBaseline = 'middle';
   c.fillText(text.toUpperCase(), 256, 64, 500);
   return labelPlane(cv, 3.4, 0.85);
 }
 
-const CHIP_PX2M = 0.0011; // device label scale: 1 canvas px = 1.1 mm
+const CHIP_PX2M = 0.00095; // device label scale: 1 canvas px = 0.95 mm (smaller = sharper)
 
 /**
  * A world-fixed device label (the row view's "chip"): cluster dot + name +
@@ -315,14 +318,28 @@ const CHIP_PX2M = 0.0011; // device label scale: 1 canvas px = 1.1 mm
 function deviceLabelPlane(d, e) {
   const vertical = d.loc.kind === 'side';
   const pos = vertical ? `V${d.loc.at + 1}` : M.formatSpan(d.loc.at, d.loc.at + e.h - 1);
-  const nameFont = `600 22px ${MONO_FONT}`;
-  const posFont = `400 15px ${MONO_FONT}`;
-  const H = 34, pad = 10, dot = 10, gap = 7; // px
-  const maxName = vertical ? 380 : 300; // keeps the chip inside face / slot
-  const { text: name, w: nameW } = fitText(d.name, maxName, nameFont, 0.5);
+  // Plate: 70 % of a 1 U box (the 1 U device body is 44.45 − 8 =
+  // 36.45 mm, so 27 px ≈ 25.65 mm) — the same for every device. The
+  // name is the largest size that exactly fits the plate: with a
+  // centered baseline the caps/descenders reach ≈ 0.47 em from the
+  // middle, so 25 px fills the 27 px plate edge-to-edge.
+  // (The layout namespace is not reachable here: the local `L` below
+  //  shadows it.)
+  const H = Math.round((0.7 * (0.04445 - 0.008)) / CHIP_PX2M); // 27 px
+  const nameFont = `400 25px ${MONO_FONT}`;
+  const posFont = `400 12px ${MONO_FONT}`;
+  const pad = 8, gap = 6, dot = 9;
+  const faceW = e.size[0] / CHIP_PX2M; // logical px across the device face
   _mc.font = posFont;
   const posW = _mc.measureText(pos).width + pos.length * 0.5;
-  const L = pad + dot + gap + nameW + 8 + posW + pad; // the row's length
+  const maxName = vertical
+    ? 380
+    : Math.max(40, Math.min(Math.round(H * 9), faceW - 2 * pad - dot - 2 * gap - posW));
+  const { text: name, w: nameW } = fitText(d.name, maxName, nameFont, 0.5);
+  // The row's length: horizontal chips stretch to cover 70 % of the device
+  // face (and never run past it).
+  const fit = pad + dot + gap + nameW + gap + posW + pad;
+  const L = vertical ? fit : Math.min(faceW, Math.max(fit, 0.7 * faceW));
   const W = vertical ? H : L, Hh = vertical ? L : H; // logical px
   const [cv, c] = labelCanvas(W, Hh);
   if (vertical) {
@@ -330,10 +347,12 @@ function deviceLabelPlane(d, e) {
     c.rotate(Math.PI / 2);
   }
   c.beginPath();
-  rr(c, 1, 1, L - 2, H - 2, 7);
-  c.fillStyle = 'rgba(10,14,20,0.85)';
+  rr(c, 1, 1, L - 2, H - 2, gap);
+  // Nearly solid: a 15 %-transparent plate reads as much smaller than its
+  // real 70 %-of-1U-box height against the dark rack.
+  c.fillStyle = 'rgba(10,14,20,0.97)';
   c.fill();
-  c.strokeStyle = '#3a4a61';
+  c.strokeStyle = '#5a7292';
   c.lineWidth = 1.5;
   c.stroke();
   c.beginPath();
@@ -346,7 +365,7 @@ function deviceLabelPlane(d, e) {
   c.fillText(name, pad + dot + gap, H / 2 + 1);
   c.fillStyle = '#8fa1b8';
   c.font = posFont;
-  c.fillText(pos, pad + dot + gap + nameW + 8, H / 2 + 1);
+  c.fillText(pos, pad + dot + gap + nameW + gap, H / 2 + 1);
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
@@ -367,6 +386,8 @@ const _c = new THREE.Color();
 const _t1 = new THREE.Vector3();
 const _t2 = new THREE.Vector3();
 const _t3 = new THREE.Vector3();
+const _right = new THREE.Vector3();
+const _up = new THREE.Vector3();
 
 const put = (im, i, x, y, z, sx, sy, sz) => {
   _m.compose(_v.set(x, y, z), _q.identity(), _vs.set(sx, sy, sz));
@@ -1631,7 +1652,10 @@ function enterRackView(re, flyDur = 0) {
     fromPos,
     fromH,
     fromTarget,
-    finalH: re.height * 1.4, // relaxed framing: floor below, labels above
+    // Tighter than before: at the old 1.4×, one unit was only ~13 px on a
+    // 1080 p screen and the labels unreadable. 0.8× puts the label at a
+    // readable ~15 px; Shift+wheel zooms out to take in the whole rack.
+    finalH: re.height * 0.8,
     minH: re.height * 0.35, // close up on a few devices
     maxH: 90, // zoom right out to take in the whole row
     fly,
