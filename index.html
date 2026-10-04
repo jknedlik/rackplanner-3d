@@ -35,7 +35,7 @@
             <h3>Controls</h3>
             <p><b>Orbit:</b> drag to rotate · wheel to zoom · right-drag or Shift-drag to pan · click to inspect</p>
             <p><b>Walk:</b> W A S D to move · Shift to run · E / Q up and down · mouse to look · click to inspect</p>
-            <p><b>Rack row view:</b> double-click a rack or device (or “Show …” / “Front view in 3D” in the panel) for a straight-on view of the whole row, with every device labeled · wheel scrolls from rack to rack · Shift+wheel (or pinch) zooms · click a rack to switch to it · drag (or the Orbit button) orbits around the row while row mode stays on · the big “Leave row mode” button or Esc exits · the Row / Rack sliders at the left jump between the floor's rows (keeping your rack column, with a camera flight whose length the Flight slider sets — 3 s by default) and between the racks of the open row · the “Fade” toolbar button dims device labels by distance (on by default)</p>
+            <p><b>Rack row view:</b> double-click a rack or device (or “Enter row mode” in the panel) for a straight-on view of the whole row, with every device labeled · wheel scrolls from rack to rack · Shift+wheel (or pinch) zooms · click a rack to switch to it · drag (or the Orbit button) orbits around the row while row mode stays on · the big “Leave row mode” button or Esc exits · the Row / Rack sliders at the left jump between the floor's rows (keeping your rack column, with a camera flight whose length the Flight slider sets — 3 s by default) and between the racks of the open row · the Zoom slider sets the magnification (px per U) · the “Fade” toolbar button dims device labels by distance (on by default)</p>
             <p><b>Common:</b> V toggles walk / orbit · Esc deselects (or leaves walking) · floor buttons jump between floors</p>
           </section>
         </div>
@@ -55,6 +55,10 @@
     <label>
       <span>Rack <b id="rackVal"></b></span>
       <input type="range" id="rackSlider" min="1" max="1" step="1" value="1">
+    </label>
+    <label>
+      <span>Zoom <b id="zoomVal"></b></span>
+      <input type="range" id="zoomSlider" min="0" max="1000" step="1" value="500">
     </label>
     <label>
       <span>Flight <b id="flightVal">3 s</b></span>

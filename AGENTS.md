@@ -13,9 +13,13 @@ slots on the right), with rows hoverable/clickable and hover-synced with the
 3D view.
 
 There is also a **rack row view** camera mode: double-click a rack or
-device (or use “Show …” / “Front view in 3D” in the panel) and the view
-animates to an **orthographic** camera standing in front of the rack's
-**whole row** — each rack looks exactly like the 2D elevation. The mouse
+device (or use “Enter row mode” in the panel) and the view animates to an
+**orthographic** camera standing in front of the rack's **whole row** —
+each rack looks exactly like the 2D elevation. The row view renders at a
+**fixed on-screen scale** (CSS px per meter, `ROW_PX_PER_M` — the Zoom
+slider and Shift+wheel adjust it), so 1 U is the same pixel size on every
+screen and window; the default framing always keeps the whole rack in
+frame. The mouse
 **wheel scrolls through the row rack by rack** (the view eases smoothly from
 one rack to the next and the rack header — **centered in the view** —
 follows the centered rack); the floating device labels are shown for
@@ -28,9 +32,10 @@ to it**. **Drag (or the Orbit toolbar button) switches to a free orbit
 camera around the row at the same 2.6 m distance — no zoom jump — and
 row mode itself, and its transparency, stay on**;
 a big **“← Leave row mode” button** (bottom center, shown only in row mode)
-or Esc/V exits back to orbit. The left-side **Row / Rack sliders** jump
-between the floor's rows (keeping the rack column) and the row's racks;
-the Row slider triggers a **camera flight** whose length the **Flight**
+or Esc/V exits back to orbit. The left-side **Row / Rack / Zoom sliders** —
+Row jumps between the floor's rows (keeping the rack column), Rack between
+the row's racks, Zoom sets the magnification (px per U); the Row slider
+triggers a **camera flight** whose length the **Flight**
 slider sets (3 s by default — every phase is a fraction of that total):
 crane up to a 45° top view of the floor (with a quarter-turn, 45° of the
 full swing, while rising), pan across, descend behind the new row, and —

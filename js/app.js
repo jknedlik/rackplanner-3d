@@ -85,6 +85,10 @@ camera.rotation.order = 'YXZ';
 const orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.05, 400);
 let orthoH = 8; // visible height in meters
 const ROW_VIEW_DIST = 2.6; // how far the row view camera stands from the row
+// The row view renders at a fixed on-screen scale (CSS px per meter), so
+// 1 U is the same pixel size on every screen and at every window size —
+// the window only decides how much of the rack is visible.
+const ROW_PX_PER_M = 420;
 let lastOrthoH = 0, lastOrthoA = 0; // sizeOrtho() only works when these change
 function sizeOrtho() {
   const a = camera.aspect || 1;
@@ -1532,6 +1536,7 @@ function syncRowNav() {
   // varies (three sliders), so measure it instead of hard-coding an offset.
   const fl = overlayEl.querySelector('.rk-floor');
   if (fl) fl.style.bottom = Math.round(innerHeight - nav.getBoundingClientRect().top + 10) + 'px';
+  syncZoomSlider();
 }
 
 $('rowSlider').addEventListener('input', (e) => {
@@ -1554,6 +1559,30 @@ let flightDur = 3; // seconds — the row-switch flight (the "Flight" slider)
 $('flightSlider').addEventListener('input', (e) => {
   flightDur = +e.target.value;
   $('flightVal').textContent = flightDur + ' s';
+});
+
+// The Zoom slider: logarithmic over the row view's zoom range (the same
+// range as Shift+wheel). Its label shows what 1 U renders as.
+function syncZoomSlider() {
+  const rv = rackView;
+  const sl = $('zoomSlider');
+  if (!rv || document.activeElement === sl) return; // mid-drag: don't fight it
+  const h = canvas.clientHeight;
+  const ppm = rv.ppm || h / orthoH;
+  const ppmOut = h / rv.maxH, ppmIn = h / rv.minH;
+  sl.value = Math.round(clamp(1000 * Math.log(ppm / ppmOut) / Math.log(ppmIn / ppmOut), 0, 1000));
+  $('zoomVal').textContent = Math.round(ppm * L.U) + ' px/U';
+}
+$('zoomSlider').addEventListener('input', (e) => {
+  const rv = rackView;
+  if (!rv) return;
+  const h = canvas.clientHeight;
+  const ppmOut = h / rv.maxH, ppmIn = h / rv.minH;
+  const ppm = ppmOut * Math.pow(ppmIn / ppmOut, +e.target.value / 1000);
+  rv.ppm = ppm;
+  orthoH = h / ppm; // the frame loop notices the change and re-renders
+  sizeOrtho();
+  $('zoomVal').textContent = Math.round(ppm * L.U) + ' px/U';
 });
 
 /**
@@ -1616,6 +1645,11 @@ function enterRackView(re, flyDur = 0) {
   if (document.pointerLockElement === canvas) document.exitPointerLock();
   const rowE = rowEntryOf(re);
   const cy = re.y + re.height / 2;
+  // Default zoom: the fixed on-screen scale (ROW_PX_PER_M), but never so
+  // close that the rack is cropped — the whole rack, with a little
+  // headroom, always fits (a short window zooms out just enough).
+  const h0 = canvas.clientHeight;
+  const ppm = Math.min(ROW_PX_PER_M, (h0 * 0.94) / re.height);
   view.mode = 'orbit';
   setMode('orbit');
   const T2 = new THREE.Vector3(re.x, cy, re.z);
@@ -1652,12 +1686,10 @@ function enterRackView(re, flyDur = 0) {
     fromPos,
     fromH,
     fromTarget,
-    // 1.1×: the whole rack fits with headroom for the floating header,
-    // and is still ~25 % closer than the old 1.4× (which made the labels
-    // unreadably small). Shift+wheel zooms in (0.35×) or out (90 m).
-    finalH: re.height * 1.1,
-    minH: re.height * 0.35, // close up on a few devices
-    maxH: 90, // zoom right out to take in the whole row
+    ppm, // on-screen zoom in CSS px per meter (Zoom slider / Shift+wheel)
+    finalH: h0 / ppm,
+    minH: re.height * 0.35, // closest the zoom goes: a few devices
+    maxH: 90, // furthest out: the whole row
     fly,
     flyState,
     dur: fly ? flyDur : 0.55, // all flight timings are fractions of dur
@@ -1866,6 +1898,8 @@ canvas.addEventListener('wheel', (e) => {
       if (rv.cam === 'orbit') view.goalR = clamp(view.goalR * Math.exp(e.deltaY * 0.001), 1.5, 160);
       else {
         orthoH = clamp(orthoH * Math.exp(e.deltaY * 0.001), rv.minH, rv.maxH);
+        rv.ppm = canvas.clientHeight / orthoH; // the Zoom slider follows
+        syncZoomSlider();
         sizeOrtho();
       }
       return;
@@ -1963,6 +1997,7 @@ function updateOrbit(dt) {
 
 /* --------------------------------------------------------------- run */
 
+let viewH = 0; // canvas CSS height, tracked so resize() can rescale the row view
 function resize() {
   // Re-read the pixel ratio cap: it can change on resize (e.g. the window is
   // moved to a denser monitor) — the adaptive value stays below it.
@@ -1974,6 +2009,22 @@ function resize() {
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  // Keep the row view's on-screen scale (px per meter) constant: the
+  // visible height in meters grows/shrinks with the canvas. Skipped while
+  // an entry/flight animation is driving orthoH.
+  const h1 = canvas.clientHeight;
+  if (viewH && h1 !== viewH && rackView && rackView.cam === 'ortho' &&
+      !rackView.fly && rackView.t >= 1) {
+    const rv = rackView;
+    // The user's zoom is kept — except at (or beyond) the default framing,
+    // which must keep the whole rack in frame: re-derive it for the new
+    // window height.
+    if (rv.ppm <= (viewH * 0.94) / rv.re.height + 1)
+      rv.ppm = Math.min(ROW_PX_PER_M, (h1 * 0.94) / rv.re.height);
+    orthoH = h1 / rv.ppm;
+    syncZoomSlider();
+  }
+  viewH = h1;
   sizeOrtho();
   measureBar();
   overlayStale = true;
