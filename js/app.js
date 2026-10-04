@@ -124,6 +124,8 @@ const view = {
   goalR: 40,
   theta: 0.8,
   phi: 1.12,
+  thetaGoal: null, // one-shot angle easing (leaving row mode); drags cancel it
+  phiGoal: null,
   // walk
   pos: new THREE.Vector3(0, 1.6, 0),
   yaw: 0,
@@ -1243,6 +1245,7 @@ function setProject(p, source) {
   view.goal.set(0, Math.min(2.5, b.top * 0.4), 0);
   view.target.copy(view.goal);
   view.radius = view.goalR = Math.max(b.w, b.d) * 1.05 + 8;
+  view.thetaGoal = view.phiGoal = null;
   view.theta = 0.8;
   view.phi = 1.12;
 }
@@ -1365,6 +1368,7 @@ function toOrbit() {
   view.goal.copy(camera.position).addScaledVector(dir, 8);
   view.goal.y = Math.max(0.4, view.goal.y);
   const off = camera.position.clone().sub(view.goal);
+  view.thetaGoal = view.phiGoal = null;
   view.theta = Math.atan2(off.x, off.z);
   view.phi = clamp(Math.acos(clamp(off.y / Math.max(off.length(), 0.001), -1, 1)), 0.05, 1.5707);
   view.radius = view.goalR = 12;
@@ -1618,6 +1622,7 @@ function toRowOrbit() {
   const oz = re.dir * ROW_VIEW_DIST;
   const dist = Math.sqrt(ox * ox + oy * oy + oz * oz);
   view.radius = view.goalR = dist;
+  view.thetaGoal = view.phiGoal = null;
   view.theta = Math.atan2(ox, oz);
   view.phi = clamp(Math.acos(clamp(oy / dist, -1, 1)), 0.05, 1.5707);
 }
@@ -1793,7 +1798,6 @@ function exitRackView(keepCamera = false) {
   const rv = rackView;
   if (!rv) return;
   const re = rv.re;
-  const wasOrbit = rv.cam === 'orbit';
   rackView = null;
   world.keepSet = null;
   world.focusId = focusIdFor(selected); // refollow the real selection
@@ -1813,18 +1817,25 @@ function exitRackView(keepCamera = false) {
     m.material.dispose();
   }
   rowLabels = [];
-  if (wasOrbit || keepCamera) return; // the perspective camera already owns the view
-  view.target.copy(rv.target);
-  view.goal.copy(rv.target);
-  view.theta = re.dir === 1 ? 0 : Math.PI;
-  view.phi = Math.PI / 2;
-  view.radius = view.goalR = Math.max(3.5, orthoH * 0.85);
-  // Park the perspective camera where the orbit camera leaves off.
+  if (keepCamera) return; // a row-to-row flight keeps the camera where it is
+  // Leaving row mode always returns to a fixed “whole floor” framing:
+  // 45° elevation, 45° around the vertical axis, far enough to see the
+  // whole floor. Target and radius ease in updateOrbit, the angles via
+  // one-shot goals; the selection is kept.
+  const slab = world.layout.floors.find((f) => f.floor === re.floor).slab;
+  view.goal.set(0, re.y + 1, 0);
+  view.thetaGoal = Math.PI / 4;
+  view.phiGoal = Math.PI / 4;
+  view.goalR = Math.max(slab.w, slab.d) * 0.75 + 4;
+  // Park the perspective camera at the orbit's current pose, so the first
+  // cut lands on a coherent frame; from there everything eases.
+  const sp = Math.sin(view.phi);
   camera.position.set(
-    view.target.x + view.radius * Math.sin(view.phi) * Math.sin(view.theta),
+    view.target.x + view.radius * sp * Math.sin(view.theta),
     view.target.y + view.radius * Math.cos(view.phi),
-    view.target.z + view.radius * Math.sin(view.phi) * Math.cos(view.theta)
+    view.target.z + view.radius * sp * Math.cos(view.theta)
   );
+  camera.lookAt(view.target);
 }
 
 document.addEventListener('pointerlockchange', () => {
@@ -1865,6 +1876,7 @@ canvas.addEventListener('pointermove', (e) => {
   dragging.x = e.clientX;
   dragging.y = e.clientY;
   if (dragging.btn === 'rotate') {
+    view.thetaGoal = view.phiGoal = null; // the drag owns the angles now
     view.theta -= dx * 0.005;
     view.phi = clamp(view.phi - dy * 0.005, 0.05, 1.5707);
   } else {
@@ -1993,6 +2005,14 @@ function updateOrbit(dt) {
   // on-demand rendering needs a fixed point (the easing is asymptotic).
   if (view.target.distanceToSquared(view.goal) < 1e-8) view.target.copy(view.goal);
   if (Math.abs(view.goalR - view.radius) < 1e-4) view.radius = view.goalR;
+  if (view.thetaGoal != null) {
+    view.theta += (view.thetaGoal - view.theta) * damp;
+    if (Math.abs(view.thetaGoal - view.theta) < 0.0004) { view.theta = view.thetaGoal; view.thetaGoal = null; }
+  }
+  if (view.phiGoal != null) {
+    view.phi += (view.phiGoal - view.phi) * damp;
+    if (Math.abs(view.phiGoal - view.phi) < 0.0004) { view.phi = view.phiGoal; view.phiGoal = null; }
+  }
   const sp = Math.sin(view.phi);
   camera.position.set(
     view.target.x + view.radius * sp * Math.sin(view.theta),

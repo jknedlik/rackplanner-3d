@@ -33,7 +33,9 @@ to it**. **Drag (or the Orbit toolbar button) switches to a free orbit
 camera around the row at the same 2.6 m distance — no zoom jump — and
 row mode itself, and its transparency, stay on**;
 a big **“← Leave row mode” button** (bottom center, shown only in row mode)
-or Esc/V exits back to orbit. The left-side **Row / Rack / Zoom sliders** —
+or Esc/V exits — always returning to a fixed **45°/45° whole-floor framing**
+(45° elevation, 45° around the vertical, far enough for the whole floor,
+selection kept; target, radius and angles ease in). The left-side **Row / Rack / Zoom sliders** —
 Row jumps between the floor's rows (keeping the rack column), Rack between
 the row's racks, Zoom sets the magnification (px per U); the Row slider
 triggers a **camera flight** whose length the **Flight**
