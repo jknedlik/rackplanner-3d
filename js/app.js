@@ -1132,7 +1132,7 @@ function rackHTML(re) {
       ${row('Weight', rt.weightKg ? `${fmtKG(st.weightKg)} / ${fmtKG(rt.weightKg)}${st.overWeight ? ' <b class="over">over</b>' : ''}` : fmtKG(st.weightKg))}
       ${row('Devices', `${st.count} devices${rt.sideSlots ? `, ${st.sideUsed} / ${rt.sideSlots} side slots` : ''}`)}
     </dl>
-    <button class="linkish" data-act="rackview" data-id="${re.rack.id}">⌖ Front view in 3D</button>
+    <button class="linkish" data-act="rackview" data-id="${re.rack.id}">⌖ Enter row mode</button>
     <h3>Front view</h3>
     ${elevationSVG(re)}`;
 }
