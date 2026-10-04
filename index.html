@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Rackplanner 3D — walkable datacenter</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E%F0%9F%97%84%EF%B8%8F%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <canvas id="scene" aria-label="3D datacenter view"></canvas>
+
+  <header id="bar">
+    <h1 id="planName">…</h1>
+    <span id="planInfo" class="dim"></span>
+    <nav id="floors" aria-label="Floors"></nav>
+    <div id="modes" role="group" aria-label="Camera mode">
+      <button id="orbitBtn" class="active">Orbit</button>
+      <button id="walkBtn">Walk</button>
+      <button id="fadeBtn" class="active" title="Row view: fade device labels by distance from the centered rack">Fade</button>
+    </div>
+    <div id="actions">
+      <button id="loadBtn">Open plan…</button>
+      <button id="linkBtn">Copy link</button>
+      <details id="menu">
+        <summary aria-label="More">☰</summary>
+        <div id="menuPanel">
+          <section id="legendBox">
+            <h3>Clusters</h3>
+            <ul id="legend"></ul>
+            <p class="dim small"><span class="chip gray"></span> no cluster · <span class="chip hatch"></span> reserved space · <span class="chip red"></span> over budget</p>
+          </section>
+          <section id="helpBox">
+            <h3>Controls</h3>
+            <p><b>Orbit:</b> drag to rotate · wheel to zoom · right-drag or Shift-drag to pan · click to inspect</p>
+            <p><b>Walk:</b> W A S D to move · Shift to run · E / Q up and down · mouse to look · click to inspect</p>
+            <p><b>Rack row view:</b> double-click a rack or device (or “Show …” / “Front view in 3D” in the panel) for a straight-on view of the whole row, with every device labeled · wheel scrolls from rack to rack · Shift+wheel (or pinch) zooms · click a rack to switch to it · drag (or the Orbit button) orbits around the row while row mode stays on · the big “Leave row mode” button or Esc exits · the Row / Rack sliders at the left jump between the floor's rows (keeping your rack column, with a camera flight whose length the Flight slider sets — 3 s by default) and between the racks of the open row · the “Fade” toolbar button dims device labels by distance (on by default)</p>
+            <p><b>Common:</b> V toggles walk / orbit · Esc deselects (or leaves walking) · floor buttons jump between floors</p>
+          </section>
+        </div>
+      </details>
+    </div>
+  </header>
+
+  <div id="tooltip" hidden></div>
+  <div id="crosshair" hidden aria-hidden="true"></div>
+  <div id="rackOverlay" hidden aria-hidden="true"></div>
+  <button id="leaveRowBtn" hidden>← Leave row mode</button>
+  <aside id="rowNav" hidden aria-label="Row and rack navigation">
+    <label>
+      <span>Row <b id="rowVal"></b></span>
+      <input type="range" id="rowSlider" min="0" max="0" step="1" value="0">
+    </label>
+    <label>
+      <span>Rack <b id="rackVal"></b></span>
+      <input type="range" id="rackSlider" min="1" max="1" step="1" value="1">
+    </label>
+    <label>
+      <span>Flight <b id="flightVal">3 s</b></span>
+      <input type="range" id="flightSlider" min="1" max="10" step="0.5" value="3">
+    </label>
+  </aside>
+
+  <aside id="inspector" hidden aria-label="Details">
+    <button id="inspClose" aria-label="Close">✕</button>
+    <div id="inspBody"></div>
+  </aside>
+
+  <footer id="status"><span id="modeHint" class="dim"></span></footer>
+
+  <dialog id="loadDialog" aria-label="Open a plan">
+    <h2>Open a plan</h2>
+    <p class="dim small">A rackplanner plan file (<code>.json</code>) or a CSV inventory with <code>Rack</code>, <code>Position</code> and <code>Name</code> or <code>Type</code> columns.</p>
+    <label class="file">
+      <input type="file" id="loadFile" accept=".json,.csv,application/json,text/csv">
+      <span>Choose a .json or .csv file…</span>
+    </label>
+    <label class="dim small">…or paste plan JSON or CSV rows into
+      <textarea id="loadText" rows="7" spellcheck="false" placeholder="{ … }"></textarea>
+    </label>
+    <p id="loadErr" class="err" hidden></p>
+    <menu>
+      <button id="loadOk" class="primary">Open</button>
+      <button id="loadExample">Example plan</button>
+      <button id="loadExampleBig">Big example (2 × 16 racks)</button>
+      <form method="dialog"><button value="cancel">Cancel</button></form>
+    </menu>
+  </dialog>
+
+  <div id="warnings" hidden role="alert">
+    <button id="warningsClose" aria-label="Dismiss">✕</button>
+  </div>
+
+  <script src="js/model.js"></script>
+  <script src="js/io.js"></script>
+  <script src="js/layout.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

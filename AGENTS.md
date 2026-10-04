@@ -1,0 +1,238 @@
+# Rackplanner 3D — agent guide
+
+## What this project is
+
+A **walkable 3D viewer** for [Rackplanner](https://dennisklein.github.io/rackplanner/)
+plans. It is read-only: it renders a plan file in a virtual datacenter you can
+walk around or orbit. You hover a rack or device for a quick tooltip, click it
+for a full inspector (cluster, type, position, power, weight, serial, asset
+tag, IP, owner, notes). Clicking a rack also opens its **front view**: an SVG
+elevation drawn the way the 2D app draws it (unit grid, device faces per
+`face` style — ports, drive bays, fans, PDUs, hatched reserved space, side
+slots on the right), with rows hoverable/clickable and hover-synced with the
+3D view.
+
+There is also a **rack row view** camera mode: double-click a rack or
+device (or use “Show …” / “Front view in 3D” in the panel) and the view
+animates to an **orthographic** camera standing in front of the rack's
+**whole row** — each rack looks exactly like the 2D elevation. The mouse
+**wheel scrolls through the row rack by rack** (the view eases smoothly from
+one rack to the next and the rack header — **centered in the view** —
+follows the centered rack); the floating device labels are shown for
+**every rack of the row** — centered rack at 100% opacity, −30% per rack of
+distance (min 10%), toggleable with the "Fade" toolbar button (on by
+default); side-slot labels are rotated 90° so they run down their slot.
+The **wheel always switches between racks** (even while orbiting the row);
+**Shift+wheel / pinch zooms**; **clicking another rack in the row switches
+to it**. **Drag (or the Orbit toolbar button) switches to a free orbit
+camera around the row at the same 2.6 m distance — no zoom jump — and
+row mode itself, and its transparency, stay on**;
+a big **“← Leave row mode” button** (bottom center, shown only in row mode)
+or Esc/V exits back to orbit. The left-side **Row / Rack sliders** jump
+between the floor's rows (keeping the rack column) and the row's racks;
+the Row slider triggers a **camera flight** whose length the **Flight**
+slider sets (3 s by default — every phase is a fraction of that total):
+crane up to a 45° top view of the floor (with a quarter-turn, 45° of the
+full swing, while rising), pan across, descend behind the new row, and —
+as the last step — rotate around to face its front. Both transition rows
+stay solid during the flight; the old row is hidden again as the final
+rotation starts. Only the active
+row is shown (other rows are hidden while the view is open). Racks over
+their power/weight budget glow red, clusters are color-coded, reserved
+space is translucent. Each rack shows a panel sprite at the bottom front
+of the cabinet (rack name + the three usage bars: energy/weight/units)
+plus a vertical name tag — one letter per line — running down the
+front-left of the cabinet; nothing is hidden per-rack in the row view —
+the floating header is an HTML overlay only.
+
+Selection focus: clicking a rack (or a device/reservation inside one) keeps
+that rack fully solid and drops every other rack to 10% opacity (the row
+view hides them entirely). All racks/devices are rendered as solid+ghost
+`InstancedMesh` pairs; `fillAll()` rewrites both whenever selection, row
+view or focus changes.
+
+It is deployed to GitHub Pages (`<user>.github.io/rackplanner-3d`) and must
+stay runnable as **static files with no build step**.
+
+## Stack and ground rules
+
+- **No build step, no package manager, no CSS framework.** Plain HTML5 + CSS,
+  a few classic `<script>` files, and exactly one ES module (`js/app.js`).
+- **The only runtime dependency is Three.js**, pinned as a git submodule
+  at `vendor/three` (mrdoob/three.js, tag `r170`; the app imports
+  `vendor/three/build/three.module.js`). No CDN at runtime — everything
+  works offline once the submodule is checked out
+  (`git submodule update --init`).
+- `js/model.js` and `js/io.js` are **vendored verbatim** from upstream
+  (CC0 1.0). Do not rewrite or "modernize" them; all new behavior goes in
+  our own files (`layout.js`, `app.js`). If a bug is really in them, fix it
+  here and note it (they must keep accepting every plan file, CSV and share
+  link the 2D app produces).
+- **HTML5-first UI:** the chrome (header, inspector aside, `<dialog>`,
+  `<details>` help/legend, footer) is static HTML/CSS in `index.html`. JS
+  only fills dynamic parts (plan name, floor buttons, legend, inspector
+  body, warnings) and drives the canvas. Prefer native elements
+  (`<dialog>`, `<details>`, `<dl>`, `<nav>`, form buttons) over JS-made
+  equivalents.
+- User-entered text (device names, notes, cluster names…) is only ever put
+  into the DOM through the `esc()` helper in `app.js`.
+
+## The plan file format (rackplanner schema v3)
+
+One JSON document. A plan **file** is the document as-is; share links pack
+it into the URL. Floors/rows/racks are nested arrays; everything else is a
+flat list joined by `id` (floors, rows and racks share one id space).
+
+```
+{
+  "app": "rackplanner", "version": 3,
+  "name": "…", "info": { "site": "…", "author": "…", "revision": "…" },
+  "deviceTypes": [ { "id", "label", "tag", "spec", "height": 1..20, "face",
+                     "defaultName", "powerW", "weightKg" } ],
+  "rackTypes":   [ { "id", "name", "units": 10..60, "sideSlots": 0..4,
+                     "powerW": 0=none..budget, "weightKg" } ],
+  "floors": [ { "id", "name", "rows": [ { "id", "name",
+                "racks": [ { "id", "name", "type": rackTypeId } ] } ] } ],
+  "clusters": [ { "id", "name", "color": "#rrggbb" } ],
+  "devices":  [ { "id", "type": deviceTypeId, "name", "cluster": id|null,
+                  "notes", "serial", "asset", "ip", "owner",
+                  "powerW": null|W, "weightKg": null|kg,
+                  "height": (reserved space only),
+                  "loc": { "rack": rackId, "kind": "u"|"side", "at": n } } ],
+  "meta": { }
+}
+```
+
+Rules that matter for rendering:
+
+- **Limits:** 1–6 floors, 1–8 rows per floor, 1–16 racks per row, 60 device
+  types, 20 rack types.
+- **`loc.kind: "u"`** — `at` is the **topmost** unit the device fills; units
+  are numbered **from the top** (U1 first). Height comes from the device
+  type, so a 2U device at `at: 5` fills U5–U6.
+- **`loc.kind: "side"`** — `at` is the 0-based vertical side slot (displayed
+  as V1, V2…); only 1U devices, shown rotated (a vertical PDU). Each slot is
+  a 12 U run; the *n* slots of a rack are spread over its unit height with
+  equal gaps, the way the 2D sheet draws them.
+- **`powerW`/`weightKg` null on a device** means "inherit from its type"
+  (see `M.powerOf` / `M.weightOf`).
+- **`reserved`** is a built-in device type not stored in `deviceTypes`; each
+  reservation stores its own `height` and counts as 0 W / 0 kg unless it has
+  its own values.
+- **Rack budgets:** `rackTypes[].powerW` / `weightKg` are the budgets
+  (0 = none). A rack is "over budget" when its used total exceeds the
+  budget (`statsByRack` computes this as `overPower` / `overWeight`).
+- Optional device fields are omitted when empty; a minimal device is
+  `{ id, type, name, cluster, loc }`.
+- `deviceTypes[].face` is a drawing style: `rj45, qsfp, compute, storage,
+  jbod, gpu, patch, pdu, ups, blank, generic` (3D uses it for nothing yet —
+  color comes from the cluster).
+- Legacy versions: v1 counted units from the **bottom**; v1/v2 had a flat
+  rack list (becomes one row). `IO.normalizeProject` repairs all of it and
+  reports `warnings`.
+- **CSV inventory** (import/export): columns
+  `Floor, Row, Rack, Position, Height (U), Type, Name, Cluster, Serial
+  number, Asset tag, IP address, Owner, Power (W), Weight (kg), Notes`.
+  Import needs only `Rack`, `Position` (`U5`, `U5-6`, `Side V1`) and
+  `Name` or `Type`; missing floors/rows/racks/clusters are created by name.
+  See `IO.importCSV`.
+- **Share link:** `#plan=z<base64url>` (deflate-compressed compact JSON) or
+  `#plan=j<base64url>` (plain). `IO.encodeShare` / `IO.decodeShare`.
+
+`plans/example.json` is the built-in two-floor example plan
+(`M.createExampleProject()`), exported via `IO.serialize`.
+`plans/example-big.json` is a second, curated example loaded by the
+“Big example (2 × 16 racks)” button in the open dialog (fetched at
+runtime, normalized like any plan file): one floor, Row A = 4 network +
+8 compute + 4 GPU racks (A13–A16 are 48 U GPU racks, A15 over its
+20 kW budget), Row B = 4 network + 8 storage + 4 GPU racks (B15 over
+budget). It is generated by a one-off Node script (not in the repo) that
+builds the plan from the upstream example's device/rack types and
+clusters and writes it through `IO.serialize`.
+
+## How the 3D layout is derived (`js/layout.js`)
+
+The plan has no physical coordinates, so these are derived (meters):
+
+- 1 U = 44.45 mm. Rack = 0.60 wide × 1.05 deep, plinth 0.06 under the
+  lowest unit, frame 0.06 above the topmost; total height
+  `units × U + 0.12`.
+- Devices: 0.46 wide × 0.55 deep, centered in the rack (a 1 cm gap to the
+  side slots); a device at `at` with height `h` has its center at
+  `topY − (at − 1 + h/2) × U`.
+- Side slots: a 19″ device on its side — 1 U wide × 12 U tall (the slot's
+  run) — mounted on the right side as seen from the front. Slot *s* of a
+  rack with *n* slots sits `gap + s × (12 U + gap)` below the rack top,
+  `gap = (units − n × 12 U) / (n + 1)` — the 2D app's even distribution
+  (`L.sideSlotTop`). The rack's side shows a dark channel strip (19″ bay
+  edge to cabinet edge) with a slot box per slot; empty slots are visible
+  in 3D and as dashed boxes in the elevation.
+- Racks in a row stand side by side (0.70 m pitch — a 10 cm gap, `PITCH`),
+  centered on x. Rows are stacked along z with a 1.2 m aisle and
+  **alternating fronts** (hot/cold aisles). Floors are stacked 4.2 m apart
+  with floor slabs.
+- Rack numbering reads **left → right as seen from the row's front**: rows
+  facing −z get their x assignment mirrored (`order = n − 1 − k`), so the
+  row view, its wheel paging and the rack slider all run left → right for
+  every row.
+- Walk collision uses the rack AABBs of the nearest floor, player radius
+  0.32 m, axis-separated.
+
+## File map
+
+```
+index.html            page shell: toolbar, inspector, dialog, help (static)
+css/app.css           dark theme, all UI chrome
+js/model.js           UPSTREAM (CC0), plan model + placement rules + stats
+js/io.js              UPSTREAM (CC0), file/CSV/share-link (de)serialization
+js/layout.js          plan → physical positions (pure, DOM-free, Node-testable)
+js/app.js             the ES module: three.js scene, instanced rendering,
+                      orbit + walk + ortho row-view cameras,
+                      raycast hover/click, inspector incl. the SVG rack
+                      elevation (faceSVG / elevationSVG) and the row-view
+                      label overlay (buildRackOverlay / updateOverlay)
+vendor/three          Three.js r170, the only runtime dependency (submodule)
+plans/example.json    the built-in example plan, exported as a file
+plans/example-big.json  the “Big example” (2 × 16 racks, 306 devices)
+```
+
+Rendering uses `InstancedMesh` (one per part: rack frames 12 boxes/rack —
+closed cabinet: plinth, 4 posts, 4 rails, back panel, 2 side panels —
+side channel strips, slot boxes per side slot, device bodies, lit face
+strips, side devices, reserved, red over-budget frames; each part has a
+solid + ghost pair for selection focus) plus canvas-texture label planes
+(floor labels, per-rack panels and vertical name tags) — fixed in front of
+the cabinet (2–3 cm proud of the front face), rotated once with the rack's
+dir, never billboarded toward the camera; double-sided so they stay faintly
+visible from behind through the open cabinet. The floor slabs are
+individual meshes, each with its own procedural canvas marble texture
+(`marbleTexture(w,d)`) mapped 1:1 over the whole slab — the marble runs
+continuously, never tiling. The scene background is a matte vertical
+gradient. Picking maps `instanceId` back to plan entities through
+`world.pick`; slabs carry their floor in `userData.floor`.
+
+## Commands
+
+```sh
+# run locally (ES modules need http://, not file://)
+python3 -m http.server 8080
+# → http://localhost:8080
+
+# syntax-check the plain scripts
+node --check js/model.js js/io.js js/layout.js
+# app.js is an ES module:
+node --input-type=module --check < js/app.js
+
+# regenerate the example plan file (after upstream changes)
+node -e "const M=require('./js/model.js'),IO=require('./js/io.js'),fs=require('fs');fs.writeFileSync('plans/example.json',IO.serialize(M.createExampleProject()))"
+```
+
+There are no unit tests yet; `js/model.js`, `js/io.js` and `js/layout.js`
+are DOM-free, so a Node one-liner (see above) is the usual smoke test.
+
+## Deploy
+
+`.github/workflows/pages.yml` deploys the working tree to GitHub Pages on
+every push to the default branch (static files, no build — same shape as
+upstream's workflow). The site must work from any static host, including
+`localhost`.
