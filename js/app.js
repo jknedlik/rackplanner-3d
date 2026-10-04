@@ -1700,6 +1700,13 @@ function updateRackView(dt) {
     sizeOrtho();
     rv.target.copy(_t1);
     orthoCam.lookAt(rv.target);
+    // The pan ends at t = 0.5 — the view has covered the x/y distance to
+    // the new rack. The selection box follows the view: it jumps to the
+    // new rack the moment the camera arrives, not when the flight ends.
+    if (rv.t >= 0.5 && !rv.selMoved) {
+      rv.selMoved = true;
+      select({ kind: 'rack', entry: re, box: entityBox('rack', re) });
+    }
     // As the final rotation begins, the old row is out of the transition
     // again — the turn would otherwise swing it back into full view.
     if (rv.t >= ROT && !rv.oldRowHidden) {
