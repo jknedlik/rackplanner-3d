@@ -1652,10 +1652,10 @@ function enterRackView(re, flyDur = 0) {
     fromPos,
     fromH,
     fromTarget,
-    // Tighter than before: at the old 1.4×, one unit was only ~13 px on a
-    // 1080 p screen and the labels unreadable. 0.8× puts the label at a
-    // readable ~15 px; Shift+wheel zooms out to take in the whole rack.
-    finalH: re.height * 0.8,
+    // 1.1×: the whole rack fits with headroom for the floating header,
+    // and is still ~25 % closer than the old 1.4× (which made the labels
+    // unreadably small). Shift+wheel zooms in (0.35×) or out (90 m).
+    finalH: re.height * 1.1,
     minH: re.height * 0.35, // close up on a few devices
     maxH: 90, // zoom right out to take in the whole row
     fly,
