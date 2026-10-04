@@ -112,8 +112,9 @@ code { font-family: var(--mono); font-size: 0.92em; }
 .rk-floor {
   position: absolute;
   left: 12px;
-  /* just above the row/rack slider panel (centered at 50%) */
-  bottom: calc(50% + 66px);
+  /* fallback only — syncRowNav() repositions this just above the slider
+     panel, whose height varies and must not be overlapped */
+  bottom: calc(50% + 100px);
   padding: 5px 14px;
   font: 700 14px system-ui, sans-serif;
   letter-spacing: 1px;

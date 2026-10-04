@@ -1507,6 +1507,10 @@ function syncRowNav() {
   rackSlider.max = rv.row.racks.length;
   rackSlider.value = rv.activeIdx + 1;
   $('rackVal').textContent = rn(rv.re.rack.name);
+  // The floor chip sits just above the slider panel — the panel's height
+  // varies (three sliders), so measure it instead of hard-coding an offset.
+  const fl = overlayEl.querySelector('.rk-floor');
+  if (fl) fl.style.bottom = Math.round(innerHeight - nav.getBoundingClientRect().top + 10) + 'px';
 }
 
 $('rowSlider').addEventListener('input', (e) => {
