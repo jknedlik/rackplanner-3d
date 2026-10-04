@@ -199,7 +199,7 @@ plans/example-big.json  the “Big example” (2 × 16 racks, 306 devices)
 Rendering uses `InstancedMesh` (one per part: rack frames 12 boxes/rack —
 closed cabinet: plinth, 4 posts, 4 rails, back panel, 2 side panels —
 side channel strips, slot boxes per side slot, device bodies, lit face
-strips, side devices, reserved, red over-budget frames; each part has a
+strips, side devices, reserved, soft red over-budget glow shells; each part has a
 solid + ghost pair for selection focus) plus canvas-texture label planes
 (floor labels, per-rack panels and vertical name tags) — fixed in front of
 the cabinet (2–3 cm proud of the front face), rotated once with the rack's

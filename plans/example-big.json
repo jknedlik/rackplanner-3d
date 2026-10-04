@@ -413,7 +413,7 @@
       "name": "Spine expansion",
       "cluster": "c-net",
       "notes": "Second spine pair, next budget year",
-      "height": 1,
+      "height": 8,
       "loc": {
         "rack": "r1",
         "kind": "u",
@@ -492,7 +492,7 @@
       "name": "Spine expansion",
       "cluster": "c-net",
       "notes": "Second spine pair, next budget year",
-      "height": 1,
+      "height": 8,
       "loc": {
         "rack": "r2",
         "kind": "u",
@@ -571,7 +571,7 @@
       "name": "Spine expansion",
       "cluster": "c-net",
       "notes": "Second spine pair, next budget year",
-      "height": 1,
+      "height": 8,
       "loc": {
         "rack": "r3",
         "kind": "u",
@@ -650,7 +650,7 @@
       "name": "Spine expansion",
       "cluster": "c-net",
       "notes": "Second spine pair, next budget year",
-      "height": 1,
+      "height": 8,
       "loc": {
         "rack": "r4",
         "kind": "u",
@@ -2215,7 +2215,7 @@
       "cluster": "c-heron",
       "notes": "Two more GPU servers, power already booked — rack now over budget",
       "powerW": 8500,
-      "height": 1,
+      "height": 6,
       "loc": {
         "rack": "r15",
         "kind": "u",
@@ -2371,7 +2371,7 @@
       "name": "Spine expansion",
       "cluster": "c-net",
       "notes": "Second spine pair, next budget year",
-      "height": 1,
+      "height": 8,
       "loc": {
         "rack": "r17",
         "kind": "u",
@@ -2450,7 +2450,7 @@
       "name": "Spine expansion",
       "cluster": "c-net",
       "notes": "Second spine pair, next budget year",
-      "height": 1,
+      "height": 8,
       "loc": {
         "rack": "r18",
         "kind": "u",
@@ -2529,7 +2529,7 @@
       "name": "Spine expansion",
       "cluster": "c-net",
       "notes": "Second spine pair, next budget year",
-      "height": 1,
+      "height": 8,
       "loc": {
         "rack": "r19",
         "kind": "u",
@@ -2608,7 +2608,7 @@
       "name": "Spine expansion",
       "cluster": "c-net",
       "notes": "Second spine pair, next budget year",
-      "height": 1,
+      "height": 8,
       "loc": {
         "rack": "r20",
         "kind": "u",
@@ -3645,7 +3645,7 @@
       "cluster": "c-heron",
       "notes": "Two more GPU servers, power already booked — rack now over budget",
       "powerW": 8500,
-      "height": 1,
+      "height": 6,
       "loc": {
         "rack": "r31",
         "kind": "u",

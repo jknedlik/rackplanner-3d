@@ -230,9 +230,10 @@ function rackPanel(name, st) {
 /** Vertical rack name tag: one letter per line, running down the rack's front-left. */
 function rackNameTag(name) {
   const LW = 40; // px per letter row
-  const [cv, c] = labelCanvas(44, name.length * LW + 14);
+  const LH = name.length * LW + 14;
+  const [cv, c] = labelCanvas(44, LH);
   c.beginPath();
-  rr(c, 1, 1, 42, cv.height - 2, 8);
+  rr(c, 1, 1, 42, LH - 2, 8);
   c.fillStyle = 'rgba(12,17,26,0.55)';
   c.fill();
   c.fillStyle = '#e8eef7';
@@ -449,10 +450,12 @@ function buildWorld() {
     else pick.dev.push(dv);
   }
 
-  // Over-budget racks get a red frame (also ghosted).
+  // Over-budget racks glow red: a soft translucent shell around the cabinet
+  // (a wireframe frame read badly at an angle — it looked like a stray red
+  // triangle). The shell is 3 cm proud of the cabinet on every side.
   const overRacks = layout.racks.filter((r) => r.stats.overPower || r.stats.overWeight);
   let overSolid = null, overGhost = null;
-  if (overRacks.length) [overSolid, overGhost] = mkPair(edge, new THREE.LineBasicMaterial({ color: 0xff4d4d, transparent: true, opacity: 0.95 }), new THREE.LineBasicMaterial({ color: 0xff4d4d, transparent: true, opacity: 0.08 }), overRacks.length);
+  if (overRacks.length) [overSolid, overGhost] = mkPair(unit, new THREE.MeshBasicMaterial({ color: 0xff4d4d, toneMapped: false, transparent: true, opacity: 0.2, depthWrite: false }), new THREE.MeshBasicMaterial({ color: 0xff4d4d, toneMapped: false, transparent: true, opacity: 0.03, depthWrite: false }), overRacks.length);
 
   // Labels.
   const labels = new Map();
