@@ -368,10 +368,11 @@ code { font-family: var(--mono); font-size: 0.92em; }
 .elev .eldev { cursor: pointer; }
 .elev .eldev:hover .elbg,
 .elev .eldev.hl .elbg { stroke: #ffffff; stroke-width: 1.6; }
-.elev .eldev.hl .elbg { fill-opacity: 0.45; }
+/* .elbg sits over the device's face art: a soft white wash marks the selection. */
+.elev .eldev.hl .elbg { fill-opacity: 0.3; }
 /* cabling in the elevation: tray label, device ports, cable runs */
 .elev .traylbl { font: 6px var(--mono); fill: #6c7c92; letter-spacing: 0.06em; }
-.elev .elport.idle { opacity: 0.5; pointer-events: none; }
+.elev .elport.idle { opacity: 0.5; pointer-events: none; } /* side-slot ports only */
 .elev .elcable,
 .elev .elchit { pointer-events: stroke; cursor: pointer; }
 .elev .elcable.hl { stroke: #ffffff; stroke-width: 2.2; }

@@ -8,6 +8,7 @@
 import * as THREE from '../vendor/three/build/three.module.js';
 
 const M = window.RP.model;
+const R = window.RP.render;
 const IO = window.RP.io;
 const L = window.RP.layout;
 
@@ -32,6 +33,11 @@ function fitText(text, maxW, font = `7.5px ${MONO_FONT}`, ls = 0.2) {
   t += '…';
   return { text: t, w: width(t) };
 }
+/** Width of `text` set in `css` (a font shorthand like the 2D app's FONTS) — for R.fitText. */
+const measureText = (text, css) => {
+  _mc.font = css;
+  return _mc.measureText(text).width;
+};
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const fmtKW = (w) => (w >= 1000 ? (w / 1000).toFixed(w >= 10000 ? 0 : 1).replace(/\.0$/, '') + ' kW' : Math.round(w) + ' W');
 const fmtKG = (k) => (k >= 1000 ? (k / 1000).toFixed(1).replace(/\.0$/, '') + ' t' : Math.round(k) + ' kg');
@@ -543,17 +549,21 @@ function buildWorld() {
     else pick.dev.push(dv);
   }
 
-  // Front faceplates: the 2D app's device faces (ports, bays, fans, …)
-  // rasterized as a texture, one instanced mesh per device type. They sit
-  // just proud of the device's face, in front of the colored strip, and are
-  // only shown in the row view (the "Front panels" checkbox). Chrome only:
-  // the pickable face strip and body sit right behind them.
+  // Front faceplates: the 2D app's actual face drawing (R.deviceFace /
+  // R.sideFace — ports, bays, fans, PDUs, the rear with its power supplies
+  // for a device mounted back to front), tinted with the cluster and
+  // rasterized as a texture, one instanced mesh per type + side + cluster.
+  // They sit just proud of the device's face, in front of the colored
+  // strip, and are only shown in the row view (the "Front panels" checkbox).
+  // Chrome only: the pickable face strip and body sit right behind them.
   const plateByType = new Map();
   for (const dv of devs)
     if (!dv.side && !dv.reserved) {
-      const e = plateByType.get(dv.type.id);
+      const cl = dv.d.cluster ? M.clusterById(project, dv.d.cluster) : null;
+      const key = dv.type.id + '|' + (dv.d.reversed ? 'r' : '') + '|' + (cl ? cl.color : '');
+      const e = plateByType.get(key);
       if (e) e.list.push(dv);
-      else plateByType.set(dv.type.id, { type: dv.type, list: [dv] });
+      else plateByType.set(key, { type: dv.type, color: cl ? cl.color : null, reversed: !!dv.d.reversed, list: [dv] });
     }
   const plates = [...plateByType.values()];
   for (const p of plates) {
@@ -564,7 +574,7 @@ function buildWorld() {
     p.mesh.visible = false;
     g.add(p.mesh);
     for (const dv of p.list) dv.plate = p;
-    makeFaceTexture(p.type, (tex) => {
+    makeFaceTexture(p.type, p.color, p.reversed, (tex) => {
       p.mesh.material.color.set(0xffffff);
       p.mesh.material.map = tex;
       p.mesh.material.needsUpdate = true;
@@ -1429,7 +1439,7 @@ function select(ent) {
  * faces (ports, bays, fans, …), cluster colors, hatched reserved space,
  * side slots on the right. Rows are hoverable and clickable. */
 
-const ELU = 12; // px per unit in the elevation view
+const ELU = 16; // px per unit in the elevation view (the 2D face art's text is 11 px)
 
 // Elevation hover state — shared with the 3D hover loop so device outlines
 // and cable highlights stay in sync between the view and the open front view.
@@ -1492,7 +1502,9 @@ function elevationSVG(re) {
 
   const o = [];
   o.push(`<svg class="elev" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(rn(re.rack.name))} front view">`);
-  o.push(`<defs><pattern id="hatch" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="#151c28"/><line x1="0" y1="0" x2="0" y2="6" stroke="#3a4656" stroke-width="2"/></pattern></defs>`);
+  // The face art fills its vents with the theme's perforation pattern.
+  o.push(`<defs>${R.perfPattern('dark')}</defs>`);
+
   // Cable tray above the row, one lane per network.
   o.push(`<rect x="6" y="${trayY}" width="${W - 12}" height="${trayH}" rx="2" fill="#101724" stroke="#3a4a61" stroke-width="1" stroke-dasharray="4 3"/>`);
   o.push(`<text class="traylbl" x="8" y="${trayY - 3}">CABLE TRAY${rackCables.length ? ` · ${rackCables.length}` : ''}</text>`);
@@ -1565,33 +1577,46 @@ function elevationSVG(re) {
   for (const d of devs) {
     const e = world.dvById.get(d.id);
     if (!e) continue;
-    const col = e.color;
     if (d.loc.kind === 'side') continue; // drawn with the slot boxes above
     const y = top + (d.loc.at - 1) * ELU;
     const hpx = e.h * ELU;
-    const fit = fitText(d.name, faceW - 18); // keep the name inside the device box
-    const name = esc(fit.text);
-    const nameW = Math.min(faceW - 16, fit.w + 8);
-    const portFace = ['rj45', 'qsfp', 'patch'].includes(e.type.face);
-    const ports = !e.reserved && portFace ? e.ports : [];
+    // The 2D app's own face drawing: the side visible from the rack's front
+    // (a device mounted back to front shows its rear), tinted with the
+    // cluster, with the real ports of that side — the cabled ones in their
+    // network's color. Reserved space gets its hatched drawing.
+    const visible = d.reversed ? 'rear' : 'front';
+    const sc = R.schemeFor(d.cluster && M.clusterById(project, d.cluster) ? M.clusterById(project, d.cluster).color : null, 'dark');
+    const art = e.reserved
+      ? R.deviceFace(e.type, d.name, sc, 'dark', measureText, e.h, { u: ELU, width: faceW, color: null, powerW: M.powerOf(project, d) })
+      : R.sideFace(e.type, d.name, sc, 'dark', measureText, e.h, visible, {
+          u: ELU,
+          width: faceW,
+          portColor: (pn) => {
+            const cid = cableHit(d.id, pn);
+            return cid ? netColor(cid.net) : null;
+          },
+        });
     o.push(`<g class="eldev" data-did="${d.id}">`);
-    o.push(`<rect class="elbg" x="${faceX}" y="${y + 0.5}" width="${faceW}" height="${hpx - 1}" rx="1" fill="${e.reserved ? 'url(#hatch)' : col}" fill-opacity="${e.reserved ? 1 : 0.22}" stroke="${col}" stroke-width="1.2"/>`);
-    o.push(`<rect x="${faceX}" y="${y + 0.5}" width="3" height="${hpx - 1}" fill="${col}"/>`);
-    if (!e.reserved && !ports.length) o.push(`<g transform="translate(${faceX + 8} ${y + 1})">${faceSVG(e.type.face, faceW - 16, hpx - 2)}</g>`);
-    o.push(`<rect x="${faceX + 6}" y="${y + 1}" width="${nameW}" height="9" rx="1.5" fill="#0d131c" opacity="0.78"/>`);
-    o.push(`<text class="dname" x="${faceX + 10}" y="${y + 8}">${name}</text>`);
-    // The real ports, spread like in 3D; cabled ones in their network's
-    // color, the runs of their cables start here.
-    const n = e.ports.length;
-    if (n) {
-      const dy = hpx > ELU ? hpx / 2 - 2 : hpx - 4.5; // 1U devices: a strip under the name
-      e.ports.forEach((p, i) => {
-        const px = faceX + faceW * 0.03 + ((i + 0.5) / n) * (faceW * 0.94);
-        portPx.set(`${d.id}|${p.name}`, { x: px, y: y + dy, face: p.face, top: y + 1, side: false });
-        if (p.face !== 'front') return; // rear ports show as dashed runs only
+    o.push(`<g transform="translate(${faceX} ${r1(y)})">${art}</g>`);
+    // Hover/selection outline (the face art is tinted with the cluster).
+    o.push(`<rect class="elbg" x="${faceX}" y="${y + 0.5}" width="${faceW}" height="${hpx - 1}" rx="1" fill="#ffffff" fill-opacity="0"/>`);
+    // Where each of the device's ports meets the sheet: at its real face
+    // position when the port is on the visible side (its cable run starts
+    // there, solid), at the device's edge when it is on the far side (the
+    // run stays dashed).
+    const lay = e.reserved ? [] : R.portLayout(e.type, visible, e.h, faceW, { u: ELU });
+    const posBy = new Map(lay.map((pt) => [pt.name, pt]));
+    for (const p of e.ports) {
+      if (p.face === 'front') {
+        const pt = posBy.get(p.name) || { x: faceW / 2 - 2, y: hpx / 2 - 2, w: 4, h: 4 };
+        portPx.set(`${d.id}|${p.name}`, { x: faceX + pt.x + pt.w / 2, y: y + pt.y + pt.h / 2, face: 'front', top: y + 1, side: false });
         const cid = cableHit(d.id, p.name);
-        o.push(`<rect class="elport${cid ? '' : ' idle'}" x="${px - 1.75}" y="${y + dy - 1.75}" width="3.5" height="3.5" rx="0.8" fill="${cid ? netColor(cid.net) : '#22303f'}" data-cid="${cid ? esc(cid.cid) : ''}"/>`);
-      });
+        if (cid) o.push(`<rect class="elport" data-cid="${esc(cid.cid)}" x="${r1(pt.x - 1)}" y="${r1(pt.y - 1)}" width="${r1(pt.w + 2)}" height="${r1(pt.h + 2)}" fill="#ffffff" fill-opacity="0" pointer-events="all"/>`);
+      } else {
+        // The far side's run comes in dashed from the device's edge, along
+        // its first unit, the way the 2D sheet's hidden stub sits.
+        portPx.set(`${d.id}|${p.name}`, { x: 0, y: y + Math.min(hpx / 2, ELU / 2), face: 'rear', top: y + 1, side: false });
+      }
     }
     o.push(`</g>`);
   }
@@ -1655,16 +1680,22 @@ function cableHit(deviceId, port) {
 let cableIndexMap = new Map(); // "deviceId|port" → { cable }, rebuilt per elevation
 
 /**
- * A device type's faceplate texture: its 2D face (faceSVG) over a light
- * metal base, rasterized offscreen from an SVG data URL. Loaded async — the
- * plate stays its plain color until the texture arrives.
+ * A faceplate texture: the 2D app's own face drawing — R.deviceFace for a
+ * front-facing device, R.sideFace's rear (power supplies, fans, rear ports)
+ * for one mounted back to front — tinted with the cluster, at 1.6× the
+ * sheet's scale, rasterized offscreen from an SVG data URL. Loaded async —
+ * the plate stays its plain color until the texture arrives.
  */
-function makeFaceTexture(type, onReady) {
-  const W = 384; // 48 px per bay column — faceSVG caps ports at floor(w/8)
-  const H = Math.max(24, Math.round(type.height * 48)); // 48 px per U
+function makeFaceTexture(type, clusterColor, reversed, onReady) {
+  const u = 32, W = 384; // 1.6× the 2D sheet (20 px per U, 240 px bay)
+  const H = Math.max(u, type.height * u);
+  const sc = R.schemeFor(clusterColor || null, 'light');
+  const art = reversed
+    ? R.sideFace(type, type.label, sc, 'light', measureText, type.height, 'rear', { u, width: W })
+    : R.deviceFace(type, type.label, sc, 'light', measureText, type.height, { u, width: W });
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
-    `<rect width="${W}" height="${H}" fill="#dfe7f0"/>${faceSVG(type.face, W, H)}</svg>`;
+    `<defs>${R.perfPattern('light')}</defs>${art}</svg>`;
   const img = new Image();
   img.onload = () => {
     const cv = document.createElement('canvas');
@@ -1678,69 +1709,6 @@ function makeFaceTexture(type, onReady) {
   };
   img.onerror = () => {}; // the plate stays its plain light color
   img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-}
-
-function faceSVG(face, w, h) {
-  const s = [];
-  const n = (count) => Math.max(1, Math.min(count, Math.floor(w / 8)));
-  switch (face) {
-    case 'rj45': {
-      const ports = n(48), pw = (w - 12) / ports;
-      for (let i = 0; i < ports; i++) s.push(`<rect x="${6 + i * pw + 1}" y="${h / 2 - 3.5}" width="${Math.max(2, pw - 2.5)}" height="7" fill="#22303f"/>`);
-      break;
-    }
-    case 'qsfp': {
-      const ports = n(24), pw = (w - 12) / ports;
-      for (let i = 0; i < ports; i++) s.push(`<rect x="${6 + i * pw + 1}" y="${h / 2 - 4}" width="${Math.max(3, pw - 3)}" height="8" fill="#22303f"/>`);
-      break;
-    }
-    case 'patch': {
-      const ports = n(24), pw = (w - 12) / ports;
-      for (const r2 of [0, 1]) for (let i = 0; i < ports; i++) s.push(`<rect x="${6 + i * pw + 1}" y="${h * (0.28 + r2 * 0.4)}" width="${Math.max(2, pw - 2.5)}" height="${h * 0.2}" fill="#22303f"/>`);
-      break;
-    }
-    case 'pdu': {
-      const outs = n(12), pw = (w - 16) / outs;
-      for (let i = 0; i < outs; i++) s.push(`<circle cx="${10 + i * pw + pw / 2}" cy="${h / 2}" r="${Math.min(3.5, pw / 2 - 1.5)}" fill="none" stroke="#22303f" stroke-width="1.4"/>`);
-      break;
-    }
-    case 'compute': {
-      const bays = h > 14 ? 8 : 4, pw = (w * 0.42) / bays;
-      for (let i = 0; i < 5; i++) s.push(`<rect x="8" y="${4 + i * (h - 8) / 5}" width="${w * 0.42}" height="2" fill="#22303f" opacity="0.5"/>`);
-      for (let i = 0; i < bays; i++) s.push(`<rect x="${w * 0.52 + i * pw + 1}" y="${h / 2 - 4}" width="${pw - 2.5}" height="8" fill="#22303f"/>`);
-      break;
-    }
-    case 'storage': {
-      const cols = 12, rows2 = h > 16 ? 2 : 1, pw = (w - 16) / cols, ph = (h - 10) / rows2;
-      for (let r2 = 0; r2 < rows2; r2++) for (let i = 0; i < cols; i++) s.push(`<rect x="${8 + i * pw + 1}" y="${5 + r2 * ph + 1}" width="${pw - 2.5}" height="${ph - 2.5}" fill="#22303f" opacity="0.85"/>`);
-      break;
-    }
-    case 'jbod': {
-      const drawers = h > 18 ? 2 : 1, dh = (h - 10) / drawers;
-      for (let d = 0; d < drawers; d++) {
-        const dy = 5 + d * dh;
-        s.push(`<rect x="8" y="${dy}" width="${w - 16}" height="${dh - 4}" fill="none" stroke="#22303f" stroke-width="1.3"/>`);
-        s.push(`<line x1="${w / 2 - 14}" y1="${dy + dh / 2 - 2}" x2="${w / 2 + 14}" y2="${dy + dh / 2 - 2}" stroke="#22303f" stroke-width="2"/>`);
-      }
-      break;
-    }
-    case 'gpu': {
-      const r3 = Math.min(6, (h - 10) / 2);
-      for (let i = 0; i < 4; i++) s.push(`<circle cx="${w * 0.58 + i * (w * 0.36) / 4}" cy="${h / 2}" r="${r3}" fill="none" stroke="#22303f" stroke-width="1.3"/>`);
-      for (let i = 0; i < 4; i++) s.push(`<rect x="8" y="${3 + i * (h - 6) / 4}" width="${w * 0.36}" height="1.6" fill="#22303f" opacity="0.5"/>`);
-      break;
-    }
-    case 'ups':
-      s.push(`<rect x="${w - 46}" y="${h / 2 - 4}" width="26" height="8" fill="#22303f"/>`);
-      s.push(`<circle cx="${w - 12}" cy="${h / 2}" r="3" fill="none" stroke="#22303f" stroke-width="1.4"/>`);
-      break;
-    case 'blank':
-      for (let i = 0; i < 3; i++) s.push(`<rect x="${w * (0.25 + i * 0.2)}" y="${h / 2 - 1}" width="${w * 0.12}" height="2" fill="#22303f" opacity="0.6"/>`);
-      break;
-    default: // generic
-      for (let i = 0; i < 6; i++) s.push(`<line x1="${8 + i * (w - 16) / 6}" y1="${h - 4}" x2="${16 + i * (w - 16) / 6}" y2="4" stroke="#22303f" stroke-width="1.6" opacity="0.55"/>`);
-  }
-  return s.join('');
 }
 
 /* --------------------------------------------------------------- inspector */

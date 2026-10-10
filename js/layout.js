@@ -17,9 +17,9 @@
  */
 (function (root, factory) {
   'use strict';
-  if (typeof module === 'object' && module.exports) module.exports = factory(require('./model.js'));
-  else (root.RP = root.RP || {}).layout = factory(root.RP.model);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (M) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./model.js'), require('./render.js'));
+  else (root.RP = root.RP || {}).layout = factory(root.RP.model, root.RP.render);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (M, R) {
   'use strict';
 
   // Physical sizes.
@@ -157,15 +157,23 @@
         color: reserved ? '#9aa4b2' : cluster ? cluster.color : '#5d6b7a',
         ports: [],
       };
-      // Port positions: spread evenly across the face, mid-height. A bay
-      // device's face points to the rack's front or rear (flipped when the
-      // device is mounted back to front); a side device's face is the outer
-      // end of the slot and its ports run along its depth.
+      // Port positions: where the 2D drawing puts them (R.portLayout —
+      // switches in two rows, RJ45 first, cages sized per connector),
+      // mapped from face pixels to meters. A bay device's face points to
+      // the rack's front or rear (flipped when the device is mounted back
+      // to front); a side device's face is the outer end of the slot and
+      // its ports run along its depth.
       const list = reserved ? [] : M.expandPorts(type);
       const n = list.length;
       if (n) {
         const m = 0.012; // margin inside the face edge
         const outX = re.dir === 1 ? 1 : -1; // the slot's outer side
+        // The 2D sheet's 240 px bay maps onto the device's face width,
+        // 20 px per U onto its height.
+        const LEN = 240, UPX = 20;
+        const lay = new Map();
+        for (const s of ['front', 'rear'])
+          for (const pt of R.portLayout(type, s, h, LEN, { u: UPX })) lay.set(pt.name, pt);
         for (let i = 0; i < n; i++) {
           const p = list[i];
           const face = d.reversed ? (p.side === 'front' ? 'rear' : 'front') : p.side;
@@ -175,8 +183,9 @@
             y = pos[1];
             z = pos[2] - size[2] / 2 + m + ((i + 0.5) / n) * (size[2] - 2 * m);
           } else {
-            x = pos[0] - size[0] / 2 + m + ((i + 0.5) / n) * (size[0] - 2 * m);
-            y = pos[1];
+            const pt = lay.get(p.name);
+            x = pt ? pos[0] - size[0] / 2 + ((pt.x + pt.w / 2) / LEN) * size[0] : pos[0] - size[0] / 2 + m + ((i + 0.5) / n) * (size[0] - 2 * m);
+            y = pt ? pos[1] + size[1] / 2 - ((pt.y + pt.h / 2) / (h * UPX)) * size[1] : pos[1];
             z = face === 'front' ? pos[2] + re.dir * (size[2] / 2) : pos[2] - re.dir * (size[2] / 2);
           }
           const at = { x, y, z, face, rack: re, dv, name: p.name, connector: p.connector, speedGbps: p.speedGbps };

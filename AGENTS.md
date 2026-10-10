@@ -7,10 +7,13 @@ plans. It is read-only: it renders a plan file in a virtual datacenter you can
 walk around or orbit. You hover a rack or device for a quick tooltip, click it
 for a full inspector (cluster, type, position, power, weight, serial, asset
 tag, IP, owner, notes). Clicking a rack also opens its **front view**: an SVG
-elevation drawn the way the 2D app draws it (unit grid, device faces per
-`face` style — ports, drive bays, fans, PDUs, hatched reserved space, side
-slots on the right), with rows hoverable/clickable and hover-synced with the
-3D view.
+elevation drawn with the 2D app's **own face drawing** (the vendored
+`render.js`): unit grid, device faces per
+`face` style — ports, drive bays, fans, PDUs; a device mounted back to
+front shows its rear, with power supplies and fans — plus hatched reserved
+space and side slots on the right, cluster tint, and the cabled ports in
+their network's color at their real positions. Rows are
+hoverable/clickable and hover-synced with the 3D view.
 
 **Cabling (schema v4):** plans carry networks, cable types, transceivers and
 cables (a cable joins a port of one device to a port of another; `b` is a
@@ -86,13 +89,18 @@ of the cabinet (rack name + the three usage bars: energy/weight/units)
 plus a vertical name tag — one letter per line — running down the
 front-left of the cabinet; nothing is hidden per-rack in the row view —
 the floating header is an HTML overlay only. The **front faceplates** —
-the 2D app's device faces (`faceSVG` per `face` style: ports, bays, fans,
-PDUs…) rasterized as a texture over a light metal base — appear on every
-bay device **only in the row view**, behind the **“Front panels” checkbox
-in the left-side nav** (on by default): one non-pickable `InstancedMesh`
-per device type, a thin plate 9–15 mm proud of the device's face (in front
-of the lit cluster-color strip, which is what other modes show), flipped
-for rows facing −z so the texture reads left-to-right from the front.
+the 2D app's **own face drawing** (`R.deviceFace` from the vendored
+`js/render.js`: ears with screws, the real port grid per `face` style,
+drive bays, fans, PDUs, UPS displays; a device mounted back to front shows
+its **rear** — power supplies, fans, rear ports — via `R.sideFace`) —
+tinted with the cluster and rasterized as a texture (light theme, 1.6× the
+sheet's scale) — appear on every bay device **only in the row view**,
+behind the **“Front panels” checkbox in the left-side nav** (on by
+default): one non-pickable `InstancedMesh` per type + side + cluster (the
+face is tinted per cluster and a reversed device draws its rear), a thin
+plate 9–15 mm proud of the device's face (in front of the lit
+cluster-color strip, which is what other modes show), flipped for rows
+facing −z so the texture reads left-to-right from the front.
 
 Selection focus: clicking a rack (or a device/reservation inside one) keeps
 that rack fully solid and drops every other rack to 10% opacity (the row
@@ -112,11 +120,17 @@ stay runnable as **static files with no build step**.
   `vendor/three/build/three.module.js`). No CDN at runtime — everything
   works offline once the submodule is checked out
   (`git submodule update --init`).
-- `js/model.js`, `js/io.js` and `js/cabling.js` are **vendored verbatim**
-  from upstream (CC0 1.0). Do not rewrite or "modernize" them; all new
-  behavior goes in our own files (`layout.js`, `app.js`). If a bug is really
-  in them, fix it here and note it (they must keep accepting every plan
-  file, CSV and share link the 2D app produces).
+- `js/model.js`, `js/io.js`, `js/cabling.js` and `js/render.js` are
+  **vendored verbatim** from upstream (CC0 1.0). Do not rewrite or
+  "modernize" them; all new behavior goes in our own files (`layout.js`,
+  `app.js`). If a bug is really in them, fix it here and note it (they must
+  keep accepting every plan file, CSV and share link the 2D app produces).
+  `render.js` is the 2D app's own SVG face drawing: `deviceFace` /
+  `sideFace` (one side of a device, with its real ports, power supplies and
+  fans), `portLayout` (where each port sits on its face, in face px),
+  `portShape`, `schemeFor` (the cluster-tinted color scheme), `perfPattern`,
+  `THEMES`, `FONTS`, `fitText` — all DOM-free, theme parameter
+  ('light'/'dark').
 - **HTML5-first UI:** the chrome (header, inspector aside, `<dialog>`,
   `<details>` help/legend, footer) is static HTML/CSS in `index.html`. JS
   only fills dynamic parts (plan name, floor buttons, legend, inspector
@@ -201,9 +215,11 @@ Rules that matter for rendering:
 - Optional device fields are omitted when empty; a minimal device is
   `{ id, type, name, cluster, loc }`.
 - `deviceTypes[].face` is a drawing style: `rj45, qsfp, compute, storage,
-  jbod, gpu, patch, pdu, ups, blank, generic`. 3D uses it for the row
-  view's faceplate textures (`faceSVG` in `app.js`); the device body color
-  comes from the cluster.
+  jbod, gpu, patch, pdu, ups, blank, generic`. Upstream `render.js` draws
+  it (`FACE_ART` inside `deviceFace`/`sideFace`); the 3D viewer uses the
+  same drawing for the row view's faceplate textures and the 2D front
+  view's device faces; the device body color comes from the cluster
+  (`R.schemeFor` derives the face tint from it).
 - Legacy versions: v1 counted units from the **bottom**; v1/v2 had a flat
   rack list (becomes one row); v3 has no cabling (networks, cable types and
   cables come out empty). `IO.normalizeProject` upgrades all of it to v4 and
@@ -239,6 +255,11 @@ The plan has no physical coordinates, so these are derived (meters):
 - Devices: 0.46 wide × 0.55 deep, centered in the rack (a 1 cm gap to the
   side slots); a device at `at` with height `h` has its center at
   `topY − (at − 1 + h/2) × U`.
+- Port positions: where the 2D drawing puts them — `R.portLayout(type,
+  side, h, 240, { u: 20 })` in face pixels, mapped onto the device's face
+  (switches: two rows, RJ45 first, cages sized per connector; other
+  devices: one row along the lowest unit). A side device's ports still run
+  along its depth.
 - Side slots: a 19″ device on its side — 1 U wide × 12 U tall (the slot's
   run) — mounted on the right side as seen from the front, **outer face
   flush with the side panel's inner face** (its ports sit on that face).
@@ -292,17 +313,24 @@ js/io.js              UPSTREAM (CC0), file/CSV/share-link (de)serialization
 js/cabling.js         UPSTREAM (CC0), cabling: ports, cables, networks,
                       cable-type/transceiver catalogs, length/type/issue
                       resolution (pure, DOM-free)
-js/layout.js          plan → physical positions + cable routes
-                      (pure, DOM-free, Node-testable)
+js/render.js          UPSTREAM (CC0), the 2D app's SVG drawing: device
+                      faces (deviceFace / sideFace), port layout on the
+                      face (portLayout), port shapes, cluster color
+                      schemes, sheet geometry (pure, DOM-free)
+js/layout.js          plan → physical positions + cable routes (port
+                      positions from R.portLayout; pure, DOM-free,
+                      Node-testable)
 js/app.js             the ES module: three.js scene, instanced rendering,
                       orbit + walk + cable + ortho row-view cameras,
                       raycast hover/click, cable runs (fillCables /
                       updateCableHighlight) + cable-mode follow and the
                       detail card (startCableFollow / updateCableCard),
-                      row-view faceplates (makeFaceTexture / writePlate),
-                      inspector incl. the SVG rack elevation with tray +
-                      cable runs (faceSVG / elevationSVG) and the row-view
-                      label overlay (buildRackOverlay / updateOverlay)
+                      row-view faceplates from the 2D face drawing
+                      (makeFaceTexture / writePlate), inspector incl. the
+                      SVG rack elevation with tray + cable runs
+                      (elevationSVG, faces via R.sideFace / R.deviceFace)
+                      and the row-view label overlay
+                      (buildRackOverlay / updateOverlay)
 vendor/three          Three.js r170, the only runtime dependency (submodule)
 plans/example.json    the built-in example plan, exported as a file
 plans/example-big.json  the “Big example” (2 × 16 racks, 306 devices, no
@@ -313,7 +341,8 @@ Rendering uses `InstancedMesh` (one per part: rack frames 12 boxes/rack —
 closed cabinet: plinth, 4 posts, 4 rails, back panel, 2 side panels —
 side channel strips (segmented around occupied slots in the row/cable
 views), slot boxes per side slot, device bodies, lit face strips, face
-plates (row view only, one mesh per device type, textured — see above),
+plates (row view only, one mesh per type + side + cluster, textured from
+the 2D face drawing — see above),
 side devices, reserved, soft red over-budget glow shells; each structural
 part has a solid + ghost pair for selection focus), cable trays (one box
 per row, **visible in cable mode only**) and the cable runs — every leg of
@@ -367,7 +396,7 @@ python3 -m http.server 8080
 # → http://localhost:8080
 
 # syntax-check the plain scripts
-node --check js/model.js js/io.js js/cabling.js js/layout.js
+node --check js/model.js js/io.js js/cabling.js js/render.js js/layout.js
 # app.js is an ES module:
 node --input-type=module --check < js/app.js
 
