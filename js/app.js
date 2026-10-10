@@ -533,6 +533,62 @@ function buildWorld() {
   let overSolid = null, overGhost = null;
   if (overRacks.length) [overSolid, overGhost] = mkPair(unit, new THREE.MeshBasicMaterial({ color: 0xff4d4d, toneMapped: false, transparent: true, opacity: 0.2, depthWrite: false }), new THREE.MeshBasicMaterial({ color: 0xff4d4d, toneMapped: false, transparent: true, opacity: 0.03, depthWrite: false }), overRacks.length);
 
+  // Cable trays: one above every row, above its tallest rack's tray height.
+  const trays = [];
+  const trayMat = new THREE.MeshStandardMaterial({ color: 0x3c4a63, roughness: 0.65, metalness: 0.55 });
+  for (const f of layout.floors)
+    for (const r of f.rows) {
+      if (!r.racks.length) continue;
+      const w = Math.max(...r.racks.map((x) => x.x + x.w / 2)) - Math.min(...r.racks.map((x) => x.x - x.w / 2)) + 0.5;
+      const m = new THREE.Mesh(unit, trayMat);
+      m.position.set(0, r.trayY - L.TRAY_H / 2, r.z);
+      m.scale.set(w, L.TRAY_H, L.TRAY_W);
+      m.userData.row = r;
+      trays.push(m);
+      g.add(m);
+    }
+
+  // Cables: every run of every cable in one LineSegments (one draw call),
+  // vertex-colored by network. The visible subset (row view, cable
+  // visibility) is the geometry's draw range; emphasis is the dim factor
+  // written into the colors by fillCables().
+  const routeList = L.routes(project, layout);
+  const NO_NET = new THREE.Color('#8a97a8');
+  const netColor = new Map(project.networks.map((n) => [n.id, new THREE.Color(n.color)]));
+  const basePos = [];
+  const baseCol = [];
+  const segCable = [];
+  const cableRacks = new Map();
+  const cableRouteById = new Map();
+  for (const rt of routeList) {
+    const c = rt.cable;
+    const col = (c.network && netColor.get(c.network)) || NO_NET;
+    const racks = new Set();
+    for (const x of M.cableEnds(c)) {
+      const dv = layout.ports.get(`${x.end.device}|${x.end.port}`);
+      if (dv) racks.add(dv.rack.rack.id);
+    }
+    if (!racks.size) continue;
+    cableRacks.set(c.id, racks);
+    cableRouteById.set(c.id, rt);
+    for (const leg of rt.legs)
+      for (let i = 0; i + 1 < leg.length; i++) {
+        basePos.push(leg[i][0], leg[i][1], leg[i][2], leg[i + 1][0], leg[i + 1][1], leg[i + 1][2]);
+        for (const p of [leg[i], leg[i + 1]]) baseCol.push(col.r, col.g, col.b);
+        segCable.push(c);
+      }
+  }
+  const cableGeo = new THREE.BufferGeometry();
+  cableGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(basePos), 3).setUsage(THREE.DynamicDrawUsage));
+  cableGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(baseCol), 3).setUsage(THREE.DynamicDrawUsage));
+  const cables = new THREE.LineSegments(cableGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.95 }));
+  cables.frustumCulled = false;
+  g.add(cables);
+  // The hovered/selected cable gets a real 3D thickness: tube meshes rebuilt
+  // in updateCableHighlight().
+  const cableHi = new THREE.Group();
+  g.add(cableHi);
+
   // Labels.
   const labels = new Map();
   for (const r of layout.racks) {
@@ -541,14 +597,14 @@ function buildWorld() {
     const face = r.dir === 1 ? 0 : Math.PI;
     const panel = rackPanel(rn(r.rack.name), r.stats);
     panel.rotation.y = face;
-    panel.position.set(r.x, r.y + 0.38, r.z + r.dir * (L.RACK_D / 2 + 0.03));
+    panel.position.set(r.x, r.y + 0.38, r.z + r.dir * (r.d / 2 + 0.03));
     const tag = rackNameTag(rn(r.rack.name));
     tag.rotation.y = face;
     const tagH = tag.geometry.parameters.height;
     tag.position.set(
-      r.x - r.dir * 0.27, // front-left strip: never over the device boxes (±0.24), still inside the cabinet (±0.30)
+      r.x - r.dir * (r.w / 2 - 0.03), // front-left strip: clear of the device boxes (±0.23), inside the cabinet
       Math.max(r.y + tagH / 2, r.topY - 0.06 - tagH / 2), // from the top, down; never below the floor
-      r.z + r.dir * (L.RACK_D / 2 + 0.02)
+      r.z + r.dir * (r.d / 2 + 0.02)
     );
     labels.set(r.rack.id, [panel, tag]);
     g.add(panel, tag);
@@ -568,7 +624,7 @@ function buildWorld() {
   g.add(hover, sel);
 
   const dvById = new Map(layout.devices.map((dv) => [dv.d.id, dv]));
-  const pickables = [devSolid, devGhost, faceSolid, faceGhost, sideSolid, sideFaceSolid, sideGhost, sideFaceGhost, resSolid, resGhost, frameSolid, frameGhost, ...slabs];
+  const pickables = [cables, devSolid, devGhost, faceSolid, faceGhost, sideSolid, sideFaceSolid, sideGhost, sideFaceGhost, resSolid, resGhost, frameSolid, frameGhost, ...slabs];
   const instanced = [frameSolid, frameGhost, chanSolid, chanGhost, slotSolid, slotGhost, devSolid, devGhost, faceSolid, faceGhost, sideSolid, sideGhost, sideFaceSolid, sideFaceGhost, resSolid, resGhost].concat(overSolid ? [overSolid, overGhost] : []);
   return {
     group: g,
@@ -597,9 +653,22 @@ function buildWorld() {
     overGhost,
     overRacks,
     slabs,
+    trays,
+    cables,
+    cableGeo,
+    cableHi,
+    cableBasePos: basePos,
+    cableBaseCol: baseCol,
+    segCable,
+    segCount: segCable.length,
+    cableRacks,
+    cableRouteById,
+    cableHot: null, // cable ids that stay bright while a selection dims the rest
+    cableOn: true,
     pickables,
     instanced,
     focusId: null,
+    focusRacks: null, // cable selection: the racks it runs through stay solid
     keepSet: null, // row view: set of rack ids that stay solid
     pick,
     hover,
@@ -609,29 +678,30 @@ function buildWorld() {
 
 /** Writes one rack's 9 frame boxes into `im` at row `j`. */
 function writeFrame(im, j, r) {
-  const px = L.RACK_W / 2 - 0.025;
-  const pz = L.RACK_D / 2 - 0.025;
+  const w = r.w, d = r.d;
+  const px = w / 2 - 0.025;
+  const pz = d / 2 - 0.025;
   const h = r.height;
   let i = j;
-  put(im, i++, r.x, r.y + L.BASE_H / 2, r.z, L.RACK_W - 0.02, L.BASE_H, L.RACK_D - 0.02);
+  put(im, i++, r.x, r.y + L.BASE_H / 2, r.z, w - 0.02, L.BASE_H, d - 0.02);
   put(im, i++, r.x - px, r.y + h / 2, r.z - pz, 0.05, h, 0.05);
   put(im, i++, r.x + px, r.y + h / 2, r.z - pz, 0.05, h, 0.05);
   put(im, i++, r.x - px, r.y + h / 2, r.z + pz, 0.05, h, 0.05);
   put(im, i++, r.x + px, r.y + h / 2, r.z + pz, 0.05, h, 0.05);
-  put(im, i++, r.x, r.y + h - 0.022, r.z + pz, L.RACK_W, 0.045, 0.05);
-  put(im, i++, r.x, r.y + h - 0.022, r.z - pz, L.RACK_W, 0.045, 0.05);
-  put(im, i++, r.x, r.y + L.BASE_H + 0.022, r.z + pz, L.RACK_W, 0.045, 0.05);
-  put(im, i++, r.x, r.y + L.BASE_H + 0.022, r.z - pz, L.RACK_W, 0.045, 0.05);
-  put(im, i++, r.x, r.y + L.BASE_H + (r.units * L.U) / 2, r.z - r.dir * (L.RACK_D / 2 - 0.015), L.RACK_W - 0.06, r.units * L.U, 0.02);
+  put(im, i++, r.x, r.y + h - 0.022, r.z + pz, w, 0.045, 0.05);
+  put(im, i++, r.x, r.y + h - 0.022, r.z - pz, w, 0.045, 0.05);
+  put(im, i++, r.x, r.y + L.BASE_H + 0.022, r.z + pz, w, 0.045, 0.05);
+  put(im, i++, r.x, r.y + L.BASE_H + 0.022, r.z - pz, w, 0.045, 0.05);
+  put(im, i++, r.x, r.y + L.BASE_H + (r.units * L.U) / 2, r.z - r.dir * (d / 2 - 0.015), w - 0.06, r.units * L.U, 0.02);
   // Side panels: the cabinet is closed, not an open frame.
-  put(im, i++, r.x - (L.RACK_W / 2 - 0.0125), r.y + h / 2, r.z, 0.025, h, L.RACK_D - 0.1);
-  put(im, i++, r.x + (L.RACK_W / 2 - 0.0125), r.y + h / 2, r.z, 0.025, h, L.RACK_D - 0.1);
+  put(im, i++, r.x - (w / 2 - 0.0125), r.y + h / 2, r.z, 0.025, h, d - 0.1);
+  put(im, i++, r.x + (w / 2 - 0.0125), r.y + h / 2, r.z, 0.025, h, d - 0.1);
 }
 
 /** Writes a rack's dark side channel strip (full unit height) into `im`. */
 function writeChannel(im, j, r) {
-  const cw = L.RACK_W / 2 - 0.2413; // 19" bay edge to the cabinet edge
-  put(im, j, r.x + r.dir * (L.RACK_W / 2 - cw / 2), r.y + L.BASE_H + (r.units * L.U) / 2, r.z + r.dir * 0.476, cw, r.units * L.U, 0.012);
+  const cw = r.w / 2 - 0.2413; // 19" bay edge to the cabinet edge
+  put(im, j, r.x + r.dir * (r.w / 2 - cw / 2), r.y + L.BASE_H + (r.units * L.U) / 2, r.z + r.dir * 0.476, cw, r.units * L.U, 0.012);
 }
 
 /** Writes a device body (or reserved block) into `im` at instance `j`. */
@@ -651,9 +721,10 @@ function fillAll() {
   needsRender = true; // instance matrices and label opacities changed
   hoverDirty = true; // the pickable instances changed under the pointer
   const fid = W.focusId;
+  const fr = W.focusRacks;
   const keep = W.keepSet; // row view: the whole row stays solid
   const hide = !!rackView; // row view: no racks but the row's
-  const solidOf = (id) => (keep ? keep.has(id) : id === fid);
+  const solidOf = (id) => (keep ? keep.has(id) : fr ? fr.has(id) : id === fid);
   let fs = 0, fg = 0, cs = 0, cg = 0;
   for (let ri = 0; ri < W.layout.racks.length; ri++) {
     const r = W.layout.racks[ri];
@@ -728,7 +799,7 @@ function fillAll() {
     const im = solid ? W.slotSolid : W.slotGhost;
     const j = solid ? sls++ : slg++;
     put(im, j,
-      se.r.x + se.r.dir * (L.RACK_W / 2 - 0.035), // same center as the slot's device
+      se.r.x + se.r.dir * (se.r.w / 2 - 0.035), // same center as the slot's device
       se.r.topY - L.sideSlotTop(se.r.units, se.s, se.r.rackType.sideSlots) - L.SIDE_LEN / 2,
       se.r.z + se.r.dir * 0.49,
       L.SIDE_W, L.SIDE_LEN, 0.012);
@@ -744,7 +815,7 @@ function fillAll() {
       if (hide && !solid) return;
       const im = solid ? W.overSolid : W.overGhost;
       const j = solid ? os++ : og++;
-      put(im, j, r.x, r.y + r.height / 2, r.z, L.RACK_W + 0.06, r.height + 0.06, L.RACK_D + 0.06);
+      put(im, j, r.x, r.y + r.height / 2, r.z, r.w + 0.06, r.height + 0.06, r.d + 0.06);
       im.userData.idx[j] = i;
     });
     W.overSolid.count = os;
@@ -760,6 +831,123 @@ function fillAll() {
     const op = solidOf(id) ? 1 : hide ? 0 : 0.1;
     for (const spr of arr) spr.material.opacity = op;
   }
+  // Tray of the open row only (other rows are gone); always on otherwise.
+  for (const t of W.trays) t.visible = !hide || t.userData.row === rackView.row;
+  fillCables();
+}
+
+/* --------------------------------------------------------------- cabling */
+
+const C = window.RP.cabling;
+
+/** Cables that stay bright for the current focus; null = all of them. */
+function refreshCableHot() {
+  const W = world;
+  if (!W) return;
+  if (selected && selected.kind === 'cable') {
+    W.cableHot = new Set([selected.entry.cable.id]);
+    return;
+  }
+  const fid = W.focusId;
+  if (fid) {
+    const s = new Set();
+    for (const c of project.cables)
+      for (const rid of W.cableRacks.get(c.id) || [])
+        if (rid === fid) {
+          s.add(c.id);
+          break;
+        }
+    W.cableHot = s;
+    return;
+  }
+  W.cableHot = null;
+}
+
+/**
+ * Writes the visible cable segments: the row view keeps only the cables
+ * that run entirely inside the open row; the focus (a selected rack or
+ * cable) dims every other cable to 16 % of its color.
+ */
+function fillCables() {
+  const W = world;
+  if (!W.cableGeo) return;
+  const rowRacks = rackView ? new Set([...(W.keepSet || [])]) : null;
+  const pos = W.cableGeo.attributes.position.array;
+  const col = W.cableGeo.attributes.color.array;
+  const bpos = W.cableBasePos;
+  const bcol = W.cableBaseCol;
+  const hot = W.cableHot;
+  let n = 0;
+  for (let s = 0; s < W.segCount; s++) {
+    const c = W.segCable[s];
+    if (rowRacks) {
+      let vis = true;
+      for (const rid of W.cableRacks.get(c.id))
+        if (!rowRacks.has(rid)) {
+          vis = false;
+          break;
+        }
+      if (!vis) continue;
+    }
+    const f = !hot || hot.has(c.id) ? 1 : 0.16;
+    const o = s * 6;
+    for (let k = 0; k < 6; k++) {
+      pos[n * 6 + k] = bpos[o + k];
+      col[n * 6 + k] = bcol[o + k] * f;
+    }
+    n++;
+  }
+  W.cableGeo.setDrawRange(0, n * 2);
+  W.cableGeo.attributes.position.needsUpdate = true;
+  W.cableGeo.attributes.color.needsUpdate = true;
+  W.cableGeo.computeBoundingSphere();
+  needsRender = true;
+}
+
+const cableColorOf = (c) => {
+  const n = c.network ? M.networkById(project, c.network) : null;
+  return new THREE.Color(n ? n.color : '#8a97a8');
+};
+
+const _tubeWhite = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false, transparent: true, opacity: 0.55, depthWrite: false });
+
+/**
+ * The hovered or selected cable, drawn with real thickness: a soft white
+ * tube under the network color. Rebuilt whenever the highlight changes.
+ */
+function clearCableHi() {
+  const W = world;
+  if (!W.cableHi) return;
+  for (const m of W.cableHi.children) {
+    W.cableHi.remove(m);
+    m.geometry.dispose();
+    if (m.material !== _tubeWhite) m.material.dispose();
+  }
+}
+
+function updateCableHighlight() {
+  const W = world;
+  if (!W.cableHi) return;
+  clearCableHi();
+  const id =
+    selected && selected.kind === 'cable'
+      ? selected.entry.cable.id
+      : hovered && hovered.kind === 'cable'
+        ? hovered.entry.cable.id
+        : null;
+  const rt = id ? W.cableRouteById.get(id) : null;
+  if (!rt || !W.cableOn) return;
+  const strong = !!(selected && selected.kind === 'cable' && selected.entry.cable.id === id);
+  const col = cableColorOf(rt.cable);
+  for (const leg of rt.legs) {
+    const pts = leg.map((p) => new THREE.Vector3(p[0], p[1], p[2]));
+    const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.5);
+    const tubular = Math.max(8, pts.length * 3);
+    const g = new THREE.TubeGeometry(curve, tubular, strong ? 0.013 : 0.009, 6, false);
+    if (strong) W.cableHi.add(new THREE.Mesh(g, _tubeWhite));
+    W.cableHi.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: col, toneMapped: false, transparent: true, opacity: strong ? 1 : 0.95, depthWrite: false })));
+  }
+  needsRender = true;
 }
 
 function disposeWorld(w) {
@@ -780,7 +968,7 @@ function disposeWorld(w) {
 
 function entityBox(kind, entry) {
   if (kind === 'device' || kind === 'reserved') return { pos: entry.pos, size: entry.size };
-  if (kind === 'rack') return { pos: [entry.x, entry.y + entry.height / 2, entry.z], size: [L.RACK_W + 0.05, entry.height + 0.05, L.RACK_D + 0.05] };
+  if (kind === 'rack') return { pos: [entry.x, entry.y + entry.height / 2, entry.z], size: [entry.w + 0.05, entry.height + 0.05, entry.d + 0.05] };
   const s = entry.slab;
   return { pos: [s.x, s.y, s.z], size: [s.w, s.h, s.d] };
 }
@@ -788,6 +976,11 @@ function entityBox(kind, entry) {
 function pickEntity(hit) {
   const o = hit.object;
   const W = world;
+  if (o === W.cables) {
+    const c = W.segCable[Math.floor(hit.index / 2)];
+    const rt = c && W.cableRouteById.get(c.id);
+    return rt ? { kind: 'cable', entry: rt, box: null } : null;
+  }
   // solid/ghost meshes carry instance → pick-list index in userData.idx;
   // face meshes share the index space of their body mesh.
   const idx = o.userData.idx ? o.userData.idx[hit.instanceId] : hit.instanceId;
@@ -826,9 +1019,13 @@ function updateHover(cam) {
   // movement raycasts on alternate frames (30 Hz is plenty for the crosshair
   // and for the camera easing after a drag).
   if (elHover) hovered = { kind: 'device', entry: elHover, box: entityBox('device', elHover) };
-  else if (dragging && dragMoved) hovered = null; // a real drag, not a click
+  else if (elCableHover) {
+    const rt = world.cableRouteById.get(elCableHover);
+    hovered = rt ? { kind: 'cable', entry: rt, box: null } : null;
+  } else if (dragging && dragMoved) hovered = null; // a real drag, not a click
   else if (hoverDirty && (pointerDirty || (camRayAlt = !camRayAlt))) {
     raycaster.far = view.mode === 'walk' ? 14 : Infinity;
+    raycaster.params.Line.threshold = view.mode === 'walk' ? 0.02 : 0.035;
     raycaster.setFromCamera(view.mode === 'walk' ? CENTER : pointer, cam);
     const hits = raycaster.intersectObjects(world.pickables, false);
     hovered = hits.length ? pickEntity(hits[0]) : null;
@@ -841,7 +1038,7 @@ function updateHover(cam) {
     ? null
     : (view.mode === 'walk' ? 'w:' : 'o:') + (hovered.kind === 'device' || hovered.kind === 'reserved'
       ? 'd' + hovered.entry.d.id
-      : hovered.kind === 'rack' ? 'r' + hovered.entry.rack.id : 'f' + hovered.entry.floor.id);
+      : hovered.kind === 'rack' ? 'r' + hovered.entry.rack.id : hovered.kind === 'cable' ? 'c' + hovered.entry.cable.id : 'f' + hovered.entry.floor.id);
   // The orbit tooltip follows the cursor; everything else is static per
   // hover entity, so an unchanged key means an unchanged frame.
   const tipFollow = view.mode === 'orbit' && (pointerPx.x !== tipX || pointerPx.y !== tipY);
@@ -855,13 +1052,22 @@ function updateHover(cam) {
       lastTipHTML = null;
       tooltip.hidden = true;
       if (openRackId && elevRows.size) for (const [id, el] of elevRows) el.classList.remove('hl');
+      if (openRackId && elevCables.size) for (const el of elevCables.values()) el.classList.remove('hl');
+      updateCableHighlight();
       return;
     }
-    setOutline(world.hover, hovered.box);
-    // Keep the open elevation row in step with the 3D hover.
+    if (hovered.box) setOutline(world.hover, hovered.box);
+    else world.hover.visible = false;
+    // Keep the open elevation in step with the 3D hover: its device rows
+    // and its cable runs highlight together.
     if (openRackId && elevRows.size) {
       const isDev = hovered.kind === 'device' || hovered.kind === 'reserved';
       for (const [id, el] of elevRows) el.classList.toggle('hl', isDev && hovered.entry.d.id === id);
+    }
+    if (openRackId && elevCables.size) {
+      const isCable = hovered.kind === 'cable';
+      const cid = isCable ? hovered.entry.cable.id : null;
+      for (const [id, els] of elevCables) for (const el of els) el.classList.toggle('hl', isCable && id === cid);
     }
     const e = hovered.entry;
     let text;
@@ -873,6 +1079,14 @@ function updateHover(cam) {
     } else if (hovered.kind === 'rack') {
       const st = e.stats;
       text = `<b>${esc(rn(e.rack.name))}</b> · ${esc(e.rackType.name)} · ${st.used}/${st.units} U · ${fmtKW(st.powerW)}`;
+    } else if (hovered.kind === 'cable') {
+      const c = e.cable;
+      const net = c.network ? M.networkById(project, c.network) : null;
+      const dsc = C.describe(project, c);
+      const ends = dsc.ends
+        .map((x) => `${esc(x.device ? x.device.name : '?')} ${esc(x.end.port)}`)
+        .join(' ⇄ ');
+      text = `<b>${esc(c.label || 'Cable')}</b>${net ? ` · ${esc(net.name)}` : ''} · ${ends}${dsc.lengthM != null ? ` · ${esc(C.fmtM(dsc.lengthM))}${dsc.lengthAuto ? ' est.' : ''}` : ''}`;
     } else {
       const st = M.statsWithin(project, e.floor.id);
       text = `<b>${esc(e.floor.name)}</b> · ${plural(st.racks, 'rack')} · ${plural(st.count, 'device')}`;
@@ -884,6 +1098,7 @@ function updateHover(cam) {
     }
     tooltip.hidden = false;
     tooltip.classList.toggle('walk', view.mode === 'walk');
+    updateCableHighlight();
   }
   if (!hovered) return;
   if (view.mode === 'orbit') {
@@ -911,7 +1126,7 @@ function focusEntity(ent) {
 function focusIdFor(ent) {
   if (!ent) return null;
   if (ent.kind === 'rack') return ent.entry.rack.id;
-  if (ent.kind === 'floor') return null;
+  if (ent.kind === 'floor' || ent.kind === 'cable') return null; // a cable's racks go to focusRacks
   return ent.entry.rack.rack.id;
 }
 
@@ -919,33 +1134,58 @@ function select(ent) {
   selected = ent;
   needsRender = true; // the selection outline changed
   hoverDirty = true; // elHover is cleared below; the 3D hover may be stale
-  if (selected) setOutline(world.sel, selected.box);
+  if (selected && selected.box) setOutline(world.sel, selected.box);
   else world.sel.visible = false;
   elHover = null;
+  elCableHover = null;
   openRackId = null;
   elevRows.clear();
+  elevCables.clear();
   if (!ent) {
     inspector.hidden = true;
-    if (!rackView && world.focusId) {
+    if (!rackView && (world.focusId || world.focusRacks)) {
       world.focusId = null;
+      world.focusRacks = null;
       fillAll();
     }
+    refreshCableHot();
+    updateCableHighlight();
     syncEnterRowBtn();
     return;
   }
   if (ent.kind === 'rack') openRackId = ent.entry.rack.id;
-  inspBody.innerHTML = ent.kind === 'floor' ? floorHTML(ent.entry) : ent.kind === 'rack' ? rackHTML(ent.entry) : deviceHTML(ent.entry);
-  if (openRackId) for (const el of inspBody.querySelectorAll('.eldev')) elevRows.set(el.dataset.did, el);
+  // A cable keeps the racks it runs through solid.
+  world.focusRacks = ent.kind === 'cable' ? world.cableRacks.get(ent.entry.cable.id) || null : null;
+  inspBody.innerHTML =
+    ent.kind === 'floor'
+      ? floorHTML(ent.entry)
+      : ent.kind === 'rack'
+        ? rackHTML(ent.entry)
+        : ent.kind === 'cable'
+          ? cableHTML(ent.entry)
+          : deviceHTML(ent.entry);
+  if (openRackId) {
+    for (const el of inspBody.querySelectorAll('.eldev')) elevRows.set(el.dataset.did, el);
+    for (const el of inspBody.querySelectorAll('.elcable')) {
+      const arr = elevCables.get(el.dataset.cid) || [];
+      elevCables.set(el.dataset.cid, arr);
+      arr.push(el);
+    }
+  }
   inspector.hidden = false;
   // The selected rack (or the rack of a selected device) stays solid; every
   // other rack drops to 10% opacity. While the front view is open the focus
   // is pinned to the viewed rack, no matter what gets clicked.
   const fid = rackView ? rackView.re.rack.id : focusIdFor(ent);
-  if (world.focusId !== fid) {
+  const fr = rackView ? null : world.focusRacks;
+  if (world.focusId !== fid || world.focusRacks !== fr) {
     world.focusId = fid;
+    world.focusRacks = fr;
     fillAll();
   }
-  focusEntity(ent);
+  refreshCableHot();
+  updateCableHighlight();
+  if (ent.box) focusEntity(ent);
   syncEnterRowBtn();
 }
 
@@ -954,10 +1194,230 @@ function select(ent) {
  * faces (ports, bays, fans, …), cluster colors, hatched reserved space,
  * side slots on the right. Rows are hoverable and clickable. */
 
-const ELU = 10; // px per unit in the elevation view
-let elHover = null; // layout device entry hovered in the elevation view
-let openRackId = null; // rack id whose elevation is open (for 3D → row sync)
-const elevRows = new Map(); // device id → row element
+const ELU = 12; // px per unit in the elevation view
+
+// Elevation hover state — shared with the 3D hover loop so device outlines
+// and cable highlights stay in sync between the view and the open front view.
+let elHover = null; // the hovered device (a world.dvById entry)
+let elCableHover = null; // the hovered cable's id
+let openRackId = null; // the rack whose front view is open in the inspector
+const elevRows = new Map(); // deviceId → <g class="eldev"> of the open elevation
+const elevCables = new Map(); // cableId → [.elcable paths] of the open elevation
+
+/**
+ * The 2D front view of a rack, the way the 2D app draws it: unit grid,
+ * device faces (ports, bays, fans, …), cluster colors, hatched reserved
+ * space, side slots on the right — plus the cabling from the front: the
+ * cable tray above the rack, the real ports of every device (cabled ones
+ * in their network's color), and the cable runs. Rear-side ports come in
+ * dashed. Rows are hoverable and clickable; so are the cables.
+ */
+function elevationSVG(re) {
+  const rt = re.rackType;
+  const units = rt.units;
+  const W = 280;
+  const left = 26;
+  const right = rt.sideSlots ? 24 : 8;
+  const faceX = left;
+  const faceW = W - right - left - 4;
+  const trayY = 8;
+
+  // Cabling context: the cables that touch this rack and the lanes they
+  // use. The 2D app's convention: a copper cable (an RJ45 head) runs down
+  // the left cable manager, everything else down the right, and the lanes
+  // stack one per network. Vertical runs stay in the margins — the bay
+  // only sees a short stub at each port.
+  const devs = M.sortedDevices(project, re.rack.id);
+  cableIndexMap = C.cableIndex(project); // "deviceId|port" → { cable, role, leg }
+  const devIds = new Set(devs.map((d) => d.id));
+  const rackCables = (project.cables || []).filter((c) => M.cableEnds(c).some((x) => devIds.has(x.end.device)));
+  const netsUsed = [...new Set(rackCables.map((c) => c.network || ''))];
+  const trayH = Math.max(14, 8 + netsUsed.length * 4); // the tray grows with its lanes
+  const top = trayY + trayH + 8;
+  const H = top + units * ELU + 8;
+  const laneY = (net) => trayY + 5 + Math.max(0, netsUsed.indexOf(net || '')) * 4;
+  const netColor = (net) => {
+    const n = net ? M.networkById(project, net) : null;
+    return n ? n.color : '#8a97a8';
+  };
+  const laneSide = (c) => {
+    const p = C.portOf(project, c.a);
+    return p && M.connectorById(p.connector).family === 'rj45' ? 'L' : 'R';
+  };
+  const netsL = netsUsed.filter((net) => rackCables.some((c) => (c.network || '') === net && laneSide(c) === 'L'));
+  const netsR = netsUsed.filter((net) => rackCables.some((c) => (c.network || '') === net && laneSide(c) === 'R'));
+  const laneR0 = faceX + faceW + (rt.sideSlots ? 5 : 9);
+  const laneX = (c) => {
+    const list = laneSide(c) === 'L' ? netsL : netsR;
+    const k = Math.max(0, list.indexOf(c.network || ''));
+    const span = list === netsL ? 8 : rt.sideSlots ? 4 : 10;
+    const step = list.length > 1 ? Math.min(3, span / (list.length - 1)) : 0;
+    return (laneSide(c) === 'L' ? 17 : laneR0) + k * step;
+  };
+
+  const o = [];
+  o.push(`<svg class="elev" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(rn(re.rack.name))} front view">`);
+  o.push(`<defs><pattern id="hatch" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="#151c28"/><line x1="0" y1="0" x2="0" y2="6" stroke="#3a4656" stroke-width="2"/></pattern></defs>`);
+  // Cable tray above the row, one lane per network.
+  o.push(`<rect x="6" y="${trayY}" width="${W - 12}" height="${trayH}" rx="2" fill="#101724" stroke="#3a4a61" stroke-width="1" stroke-dasharray="4 3"/>`);
+  o.push(`<text class="traylbl" x="8" y="${trayY - 3}">CABLE TRAY${rackCables.length ? ` · ${rackCables.length}` : ''}</text>`);
+
+  o.push(`<rect x="2" y="${top - 2}" width="${W - 4}" height="${units * ELU + 4}" rx="2" fill="#0d131c" stroke="#3a4a61" stroke-width="1.5"/>`);
+  for (let u = 1; u <= units; u++) {
+    o.push(`<line x1="${left - 3}" y1="${top + u * ELU}" x2="${W - right + 2}" y2="${top + u * ELU}" stroke="#243044" stroke-width="${u % 5 ? 0.4 : 0.8}" opacity="${u % 5 ? 0.5 : 0.9}"/>`);
+    o.push(`<text class="unum" x="13" y="${top + (u - 0.5) * ELU + 3}">${u}</text>`);
+  }
+
+  // Where an end of a cable meets the sheet: at its port (front side), at
+  // the device's edge on the lane's side (rear side — that part of the run
+  // stays dashed), or at the tray edge (a far end in another rack; the
+  // world x of that rack decides which edge).
+  const portPx = new Map(); // "deviceId|port" → { x, y, face, top }
+  const exitSide = (deviceId) => {
+    const d = world.dvById.get(deviceId);
+    const other = d && d.rack;
+    if (!other || other.rack.id === re.rack.id) return 1;
+    return other.x >= re.x ? 1 : -1;
+  };
+  const endGeom = (end, here, lx) => {
+    const p = here ? portPx.get(`${end.device}|${end.port}`) : null;
+    if (p) {
+      if (p.face === 'front') {
+        const lift = Math.min(4, Math.max(1, p.y - (p.top + 2)));
+        return { x: p.x, y: p.y, syL: p.y - lift, face: 'front', here: true };
+      }
+      const ex = lx < faceX + faceW / 2 ? faceX : faceX + faceW;
+      return { x: ex, y: p.y, syL: p.y, face: 'rear', here: true };
+    }
+    if (here) return { x: faceX + faceW / 2, y: top + 1, syL: top + 1, face: 'front', here: true }; // unknown port
+    return { x: exitSide(end.device) === 1 ? W - 8 : 8, y: 0, face: null, here: false };
+  };
+
+  // Side channel + slot boxes, like the 2D sheet: every slot is drawn, the
+  // empty ones as dashed boxes.
+  const nSlots = rt.sideSlots || 0;
+  if (nSlots) {
+    const cx = W - right + 4;
+    const sh = 12 * ELU; // a slot runs 12 U
+    const gapPx = (units * ELU - nSlots * sh) / (nSlots + 1);
+    const bySlot = new Map();
+    for (const d of devs) if (d.loc.kind === 'side') bySlot.set(d.loc.at, d);
+    o.push(`<rect x="${cx - 2}" y="${top}" width="${ELU + 4}" height="${units * ELU}" fill="#101724"/>`);
+    for (let k = 0; k < nSlots; k++) {
+      const sy = top + gapPx + k * (sh + gapPx);
+      const d = bySlot.get(k);
+      if (!d) {
+        o.push(`<rect x="${cx}" y="${sy}" width="${ELU}" height="${sh}" rx="1.5" fill="none" stroke="#3a4a61" stroke-width="1" stroke-dasharray="3 2.5"/>`);
+        continue;
+      }
+      const e = world.dvById.get(d.id);
+      const name = esc(fitText(d.name, sh - 10).text); // vertical text: fits the slot box
+      o.push(`<g class="eldev" data-did="${d.id}">`);
+      o.push(`<rect class="elbg" x="${cx}" y="${sy}" width="${ELU}" height="${sh}" rx="1.5" fill="${e.color}" fill-opacity="0.25" stroke="${e.color}" stroke-width="1.2"/>`);
+      const ports = e.type && !e.reserved ? e.ports : [];
+      if (ports.length)
+        ports.forEach((p, i) => {
+          const cy = sy + 6 + ((i + 0.5) / ports.length) * (sh - 12);
+          const cid = cableHit(d.id, p.name);
+          o.push(`<rect class="elport${cid ? '' : ' idle'}" x="${cx + ELU / 2 - 1.5}" y="${cy - 1.5}" width="3" height="3" rx="0.7" fill="${cid ? netColor(cid.net) : '#22303f'}" data-cid="${cid ? esc(cid.cid) : ''}"/>`);
+          portPx.set(`${d.id}|${p.name}`, { x: cx + ELU / 2, y: cy, face: p.face, top: sy + 1, side: true });
+        });
+      else if (e.type.face === 'pdu') for (let i = 0; i < 6; i++) o.push(`<circle cx="${cx + ELU / 2}" cy="${sy + 9 + i * (sh - 18) / 5}" r="2" fill="none" stroke="#9fb2c8" stroke-width="1"/>`);
+      o.push(`<text class="dname" transform="translate(${cx + 2} ${sy + 5}) rotate(90)">${name}</text>`);
+      o.push(`</g>`);
+    }
+  }
+  for (const d of devs) {
+    const e = world.dvById.get(d.id);
+    if (!e) continue;
+    const col = e.color;
+    if (d.loc.kind === 'side') continue; // drawn with the slot boxes above
+    const y = top + (d.loc.at - 1) * ELU;
+    const hpx = e.h * ELU;
+    const fit = fitText(d.name, faceW - 18); // keep the name inside the device box
+    const name = esc(fit.text);
+    const nameW = Math.min(faceW - 16, fit.w + 8);
+    const portFace = ['rj45', 'qsfp', 'patch'].includes(e.type.face);
+    const ports = !e.reserved && portFace ? e.ports : [];
+    o.push(`<g class="eldev" data-did="${d.id}">`);
+    o.push(`<rect class="elbg" x="${faceX}" y="${y + 0.5}" width="${faceW}" height="${hpx - 1}" rx="1" fill="${e.reserved ? 'url(#hatch)' : col}" fill-opacity="${e.reserved ? 1 : 0.22}" stroke="${col}" stroke-width="1.2"/>`);
+    o.push(`<rect x="${faceX}" y="${y + 0.5}" width="3" height="${hpx - 1}" fill="${col}"/>`);
+    if (!e.reserved && !ports.length) o.push(`<g transform="translate(${faceX + 8} ${y + 1})">${faceSVG(e.type.face, faceW - 16, hpx - 2)}</g>`);
+    o.push(`<rect x="${faceX + 6}" y="${y + 1}" width="${nameW}" height="9" rx="1.5" fill="#0d131c" opacity="0.78"/>`);
+    o.push(`<text class="dname" x="${faceX + 10}" y="${y + 8}">${name}</text>`);
+    // The real ports, spread like in 3D; cabled ones in their network's
+    // color, the runs of their cables start here.
+    const n = e.ports.length;
+    if (n) {
+      const dy = hpx > ELU ? hpx / 2 - 2 : hpx - 4.5; // 1U devices: a strip under the name
+      e.ports.forEach((p, i) => {
+        const px = faceX + faceW * 0.03 + ((i + 0.5) / n) * (faceW * 0.94);
+        portPx.set(`${d.id}|${p.name}`, { x: px, y: y + dy, face: p.face, top: y + 1, side: false });
+        if (p.face !== 'front') return; // rear ports show as dashed runs only
+        const cid = cableHit(d.id, p.name);
+        o.push(`<rect class="elport${cid ? '' : ' idle'}" x="${px - 1.75}" y="${y + dy - 1.75}" width="3.5" height="3.5" rx="0.8" fill="${cid ? netColor(cid.net) : '#22303f'}" data-cid="${cid ? esc(cid.cid) : ''}"/>`);
+      });
+    }
+    o.push(`</g>`);
+  }
+
+  // The cable runs: each end goes from its port to the cable's lane in the
+  // rack's cable manager; same-rack runs on the same side go straight
+  // down the shared lane, everything else over the tray, and far ends in
+  // other racks out to the edge of the sheet. Rear-side runs stay dashed.
+  const cbl = [];
+  for (const c of rackCables) {
+    const col = netColor(c.network);
+    const lx = laneX(c);
+    const lane = laneY(c.network);
+    const head = endGeom(c.a, devIds.has(c.a.device), lx);
+    for (const leg of M.legsOf(c).filter(Boolean)) {
+      const far = endGeom(leg, devIds.has(leg.device), lx);
+      const parts = []; // [d, dashed]
+      const push = (d, dashed) => d && parts.push([d, !!dashed]);
+      const rear = (g) => g.face === 'rear';
+      if (head.here && far.here) {
+        push(`M${r1(head.x)} ${r1(head.y)}V${r1(head.syL)}H${r1(lx)}`, rear(head));
+        if (head.face === far.face) {
+          push(`M${r1(lx)} ${r1(head.syL)}V${r1(far.syL)}`, rear(head) || rear(far));
+        } else {
+          push(`M${r1(lx)} ${r1(head.syL)}V${r1(lane)}`, rear(head));
+          push(`M${r1(lx)} ${r1(lane)}V${r1(far.syL)}`, rear(far));
+        }
+        push(`M${r1(lx)} ${r1(far.syL)}H${r1(far.x)}V${r1(far.y)}`, rear(far));
+      } else if (head.here) {
+        push(`M${r1(head.x)} ${r1(head.y)}V${r1(head.syL)}H${r1(lx)}V${r1(lane)}H${r1(far.x)}`, rear(head));
+      } else if (far.here) {
+        push(`M${r1(head.x)} ${r1(lane)}H${r1(lx)}V${r1(far.syL)}H${r1(far.x)}V${r1(far.y)}`, rear(far));
+      }
+      if (parts.length)
+        cbl.push({
+          id: c.id,
+          svg: parts
+            .map(([d, dashed]) => {
+              const da = dashed ? ' stroke-dasharray="3 2"' : '';
+              // A wide invisible twin makes the thin run easy to hover.
+              return `<path class="elchit" data-cid="${esc(c.id)}" d="${d}" fill="none" stroke="none" stroke-width="9"/>` +
+                `<path class="elcable" data-cid="${esc(c.id)}" d="${d}" fill="none" stroke="${col}" stroke-width="1.1"${da}/>`;
+            })
+            .join(''),
+        });
+    }
+  }
+  for (const q of cbl) o.push(`<g class="elcableg" data-cid="${esc(q.id)}">${q.svg}</g>`);
+  o.push(`</svg>`);
+  return o.join('');
+}
+
+/** r1: round to one decimal, like the 2D sheet's geometry. */
+const r1 = (v) => Math.round(v * 10) / 10;
+
+/** The cable on device `deviceId`'s port `port`: { cid, net } or null. */
+function cableHit(deviceId, port) {
+  const hit = cableIndexMap.get(`${deviceId}|${port}`);
+  return hit ? { cid: hit.cable.id, net: hit.cable.network || null } : null;
+}
+let cableIndexMap = new Map(); // "deviceId|port" → { cable }, rebuilt per elevation
 
 function faceSVG(face, w, h) {
   const s = [];
@@ -1022,72 +1482,6 @@ function faceSVG(face, w, h) {
   return s.join('');
 }
 
-function elevationSVG(re) {
-  const rt = re.rackType;
-  const units = rt.units;
-  const W = 280;
-  const left = 26;
-  const right = rt.sideSlots ? 24 : 8;
-  const faceX = left;
-  const faceW = W - right - left - 4;
-  const top = 6;
-  const H = top + units * ELU + 8;
-  const o = [];
-  o.push(`<svg class="elev" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(rn(re.rack.name))} front view">`);
-  o.push(`<defs><pattern id="hatch" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="#151c28"/><line x1="0" y1="0" x2="0" y2="6" stroke="#3a4656" stroke-width="2"/></pattern></defs>`);
-  o.push(`<rect x="2" y="${top - 2}" width="${W - 4}" height="${units * ELU + 4}" rx="2" fill="#0d131c" stroke="#3a4a61" stroke-width="1.5"/>`);
-  for (let u = 1; u <= units; u++) {
-    o.push(`<line x1="${left - 3}" y1="${top + u * ELU}" x2="${W - right + 2}" y2="${top + u * ELU}" stroke="#243044" stroke-width="${u % 5 ? 0.4 : 0.8}" opacity="${u % 5 ? 0.5 : 0.9}"/>`);
-    o.push(`<text class="unum" x="13" y="${top + (u - 0.5) * ELU + 2.5}">${u}</text>`);
-  }
-  // Side channel + slot boxes, like the 2D sheet: every slot is drawn, the
-  // empty ones as dashed boxes.
-  const nSlots = rt.sideSlots || 0;
-  if (nSlots) {
-    const cx = W - right + 4;
-    const sh = 12 * ELU; // a slot runs 12 U
-    const gapPx = (units * ELU - nSlots * sh) / (nSlots + 1);
-    const bySlot = new Map();
-    for (const d of M.sortedDevices(project, re.rack.id)) if (d.loc.kind === 'side') bySlot.set(d.loc.at, d);
-    o.push(`<rect x="${cx - 2}" y="${top}" width="${ELU + 4}" height="${units * ELU}" fill="#101724"/>`);
-    for (let k = 0; k < nSlots; k++) {
-      const sy = top + gapPx + k * (sh + gapPx);
-      const d = bySlot.get(k);
-      if (!d) {
-        o.push(`<rect x="${cx}" y="${sy}" width="${ELU}" height="${sh}" rx="1.5" fill="none" stroke="#3a4a61" stroke-width="1" stroke-dasharray="3 2.5"/>`);
-        continue;
-      }
-      const e = world.dvById.get(d.id);
-      const name = esc(fitText(d.name, sh - 10).text); // vertical text: fits the slot box
-      o.push(`<g class="eldev" data-did="${d.id}">`);
-      o.push(`<rect class="elbg" x="${cx}" y="${sy}" width="${ELU}" height="${sh}" rx="1.5" fill="${e.color}" fill-opacity="0.25" stroke="${e.color}" stroke-width="1.2"/>`);
-      if (e.type.face === 'pdu') for (let i = 0; i < 6; i++) o.push(`<circle cx="${cx + ELU / 2}" cy="${sy + 9 + i * (sh - 18) / 5}" r="2" fill="none" stroke="#9fb2c8" stroke-width="1"/>`);
-      o.push(`<text class="dname" transform="translate(${cx + 2} ${sy + 5}) rotate(90)">${name}</text>`);
-      o.push(`</g>`);
-    }
-  }
-  for (const d of M.sortedDevices(project, re.rack.id)) {
-    const e = world.dvById.get(d.id);
-    if (!e) continue;
-    const col = e.color;
-    if (d.loc.kind === 'side') continue; // drawn with the slot boxes above
-    const y = top + (d.loc.at - 1) * ELU;
-    const hpx = e.h * ELU;
-    const fit = fitText(d.name, faceW - 18); // keep the name inside the device box
-    const name = esc(fit.text);
-    const nameW = Math.min(faceW - 16, fit.w + 8);
-    o.push(`<g class="eldev" data-did="${d.id}">`);
-    o.push(`<rect class="elbg" x="${faceX}" y="${y + 0.5}" width="${faceW}" height="${hpx - 1}" rx="1" fill="${e.reserved ? 'url(#hatch)' : col}" fill-opacity="${e.reserved ? 1 : 0.22}" stroke="${col}" stroke-width="1.2"/>`);
-    o.push(`<rect x="${faceX}" y="${y + 0.5}" width="3" height="${hpx - 1}" fill="${col}"/>`);
-    if (!e.reserved) o.push(`<g transform="translate(${faceX + 8} ${y + 1})">${faceSVG(e.type.face, faceW - 16, hpx - 2)}</g>`);
-    o.push(`<rect x="${faceX + 6}" y="${y + 1}" width="${nameW}" height="10" rx="1.5" fill="#0d131c" opacity="0.78"/>`);
-    o.push(`<text class="dname" x="${faceX + 10}" y="${y + 8.5}">${name}</text>`);
-    o.push(`</g>`);
-  }
-  o.push(`</svg>`);
-  return o.join('');
-}
-
 /* --------------------------------------------------------------- inspector */
 
 const row = (dt, dd) => (dd ? `<dt>${dt}</dt><dd>${dd}</dd>` : '');
@@ -1100,6 +1494,19 @@ function deviceHTML(e) {
   const pos = d.loc.kind === 'side' ? `Side slot V${d.loc.at + 1}` : M.formatSpan(d.loc.at, d.loc.at + e.h - 1);
   const power = M.powerOf(project, d);
   const weight = M.weightOf(project, d);
+  // The cables on this device: each links to the cable's own inspector.
+  const cabs = C.cablesOfDevice(project, d.id);
+  const cableLine = (c) => {
+    const others = M.cableEnds(c)
+      .map((x) => x.end)
+      .filter((o) => o.device !== d.id)
+      .map((o) => {
+        const od = M.deviceById(project, o.device);
+        return `${od ? esc(od.name) : esc(o.device)} ${esc(o.port)}`;
+      });
+    const extra = others.length > 1 ? ` +${others.length - 1}` : '';
+    return `<button class="linkish" data-act="cable" data-id="${c.id}">${esc(c.label || `→ ${others[0] || '—'}`)}${extra}</button>`;
+  };
   return `
     <h2>${esc(d.name)}</h2>
     <p class="loc">${esc(re.floor.name)} · ${esc(re.row.name)} · ${esc(rn(re.rack.name))} · ${pos}</p>
@@ -1113,8 +1520,39 @@ function deviceHTML(e) {
       ${row('IP address', d.ip ? esc(d.ip) : '')}
       ${row('Owner', d.owner ? esc(d.owner) : '')}
       ${row('Notes', d.notes ? `<p class="notes">${esc(d.notes)}</p>` : '')}
+      ${row('Cables', cabs.length ? cabs.map(cableLine).join('<br>') : '')}
     </dl>
     <button class="linkish" data-act="rackview" data-id="${re.rack.id}">Show ${esc(rn(re.rack.name))}</button>`;
+}
+
+function cableHTML(rt) {
+  const c = rt.cable;
+  const dsc = C.describe(project, c);
+  const net = c.network ? M.networkById(project, c.network) : null;
+  const endHTML = (x) => {
+    const d = x.device;
+    if (!d) return `<span class="dim">${esc(x.end.device)} · ${esc(x.end.port)}</span>`;
+    const re = world.layout.rackBy.get(d.loc.rack);
+    return `<button class="linkish" data-act="device" data-id="${d.id}">${esc(d.name)}</button>
+      <small>${re ? rn(re.rack.name) : '—'} · ${esc(x.end.port)}${x.role === 'b' ? ' · B' : ''}${x.face === 'rear' ? ' · rear' : ''}</small>`;
+  };
+  const len =
+    dsc.lengthM != null ? `${esc(C.fmtM(dsc.lengthM))}${dsc.lengthAuto ? ' est.' : ' (set)'}`
+    : dsc.needM != null ? `${esc(C.fmtM(dsc.needM))} needed, no length`
+    : '<span class="dim">length not set</span>';
+  const warn = dsc.issues.filter((i) => i.level === 'warn');
+  const note = dsc.issues.filter((i) => i.level === 'note');
+  return `
+    <h2>${esc(c.label || 'Cable')}</h2>
+    <p class="loc">${net ? `<span class="chip" style="background:${net.color}"></span>${esc(net.name)}` : '<span class="dim">no network</span>'}</p>
+    <dl>
+      ${row('Type', dsc.type ? `${esc(dsc.type.name)}${dsc.type.media ? ` · ${esc(dsc.type.media)}` : ''}` : '<span class="dim">not set</span>')}
+      ${row('Length', len)}
+      ${row('End A', dsc.ends[0] ? endHTML(dsc.ends[0]) : '<span class="dim">—</span>')}
+      ${row('End B', dsc.ends[1] ? endHTML(dsc.ends[1]) : '<span class="dim">—</span>')}
+    </dl>
+    ${warn.length ? `<p class="cablewarn"><b class="over">${warn.map((i) => esc(i.short)).join(' · ')}</b></p><p class="dim">${esc(warn.map((i) => i.text).join('. '))}</p>` : ''}
+    ${note.length ? `<p class="cabenote dim">${esc(note.map((i) => i.text).join(' · '))}</p>` : ''}`;
 }
 
 function barHTML(used, budget, over) {
@@ -1156,25 +1594,74 @@ function floorHTML(f) {
 }
 
 inspBody.addEventListener('click', (ev) => {
+  // A cabled port selects its cable (like the 2D app), the row the device.
+  const pt = ev.target.closest('.elport[data-cid]');
+  if (pt && pt.dataset.cid) {
+    const rt = world.cableRouteById.get(pt.dataset.cid);
+    if (rt) {
+      select({ kind: 'cable', entry: rt, box: null });
+      return;
+    }
+  }
   const dvEl = ev.target.closest('.eldev');
   if (dvEl) {
     const dv = world.dvById.get(dvEl.dataset.did);
     if (dv) select({ kind: 'device', entry: dv, box: entityBox('device', dv) });
     return;
   }
-  const btn = ev.target.closest('button[data-act="rack"]');
+  const cb = ev.target.closest('.elcable, .elchit');
+  if (cb) {
+    const rt = world.cableRouteById.get(cb.dataset.cid);
+    if (rt) select({ kind: 'cable', entry: rt, box: null });
+    return;
+  }
+  const btn = ev.target.closest('button[data-act]');
   if (!btn) return;
-  const re = world.layout.rackBy.get(btn.dataset.id);
-  if (re) select({ kind: 'rack', entry: re, box: entityBox('rack', re) });
+  const id = btn.dataset.id;
+  if (btn.dataset.act === 'rack') {
+    const re = world.layout.rackBy.get(id);
+    if (re) select({ kind: 'rack', entry: re, box: entityBox('rack', re) });
+  } else if (btn.dataset.act === 'rackview') {
+    const re = world.layout.rackBy.get(id);
+    if (re) enterRackView(re);
+  } else if (btn.dataset.act === 'cable') {
+    const rt = world.cableRouteById.get(id);
+    if (rt) select({ kind: 'cable', entry: rt, box: null });
+  } else if (btn.dataset.act === 'device') {
+    const dv = world.dvById.get(id);
+    if (dv) select({ kind: 'device', entry: dv, box: entityBox('device', dv) });
+  }
 });
 inspBody.addEventListener('mouseover', (ev) => {
-  const t = ev.target.closest('.eldev');
-  if (t) elHover = world.dvById.get(t.dataset.did) || null;
+  // A cabled port highlights its cable; otherwise the device row or the
+  // cable run under the pointer.
+  const pt = ev.target.closest('.elport[data-cid]');
+  if (pt && pt.dataset.cid) {
+    elCableHover = pt.dataset.cid;
+    elHover = null;
+    return;
+  }
+  const dv = ev.target.closest('.eldev');
+  if (dv) {
+    elCableHover = null;
+    elHover = world.dvById.get(dv.dataset.did) || null;
+    return;
+  }
+  const cb = ev.target.closest('.elcable, .elchit');
+  if (cb) elCableHover = cb.dataset.cid;
 });
 inspBody.addEventListener('mouseout', (ev) => {
   const t = ev.target.closest('.eldev');
-  if (t && !t.contains(ev.relatedTarget)) {
-    elHover = null;
+  if (t) {
+    if (!t.contains(ev.relatedTarget)) {
+      elHover = null;
+      hoverDirty = true; // resume 3D hovering
+    }
+    return;
+  }
+  const cb = ev.target.closest('.elcable, .elchit');
+  if (cb && !cb.contains(ev.relatedTarget)) {
+    elCableHover = null;
     hoverDirty = true; // resume 3D hovering
   }
 });
@@ -1228,8 +1715,10 @@ function setProject(p, source) {
   selected = null;
   hovered = null;
   elHover = null;
+  elCableHover = null;
   openRackId = null;
   elevRows.clear();
+  elevCables.clear();
   inspector.hidden = true;
   tooltip.hidden = true;
   syncEnterRowBtn();
@@ -1391,6 +1880,16 @@ $('fadeBtn').addEventListener('click', () => {
     needsRender = true; // label opacities changed
     updateRowLabelsFade();
   }
+});
+$('cablesBtn').addEventListener('click', () => {
+  if (!world) return;
+  world.cableOn = !world.cableOn;
+  $('cablesBtn').classList.toggle('active', world.cableOn);
+  world.cables.visible = world.cableOn;
+  if (world.cableOn) updateCableHighlight();
+  else clearCableHi();
+  if (selected && selected.kind === 'cable' && !world.cableOn) select(null);
+  needsRender = true;
 });
 $('leaveRowBtn').addEventListener('click', () => exitRackView());
 // The big “Enter row mode” button — same spot and style as “Leave row
@@ -1806,7 +2305,10 @@ function exitRackView(keepCamera = false) {
   rackView = null;
   world.keepSet = null;
   world.focusId = focusIdFor(selected); // refollow the real selection
+  world.focusRacks = selected && selected.kind === 'cable' ? world.cableRacks.get(selected.entry.cable.id) : null;
   fillAll(); // restore the racks hidden while the row view was open
+  refreshCableHot();
+  updateCableHighlight();
   for (const arr of world.labels.values()) for (const spr of arr) spr.visible = true;
   for (const sp of world.floorLabels) sp.visible = true;
   overlayEl.hidden = true;
@@ -1968,7 +2470,7 @@ window.addEventListener('keyup', (e) => view.keys.delete(e.code));
 function collidersFor(fi) {
   const R = 0.32;
   return world.layout.floors[fi].rows.flatMap((r) =>
-    r.racks.map((rk) => [rk.x - L.RACK_W / 2 - R, rk.z - L.RACK_D / 2 - R, rk.x + L.RACK_W / 2 + R, rk.z + L.RACK_D / 2 + R])
+    r.racks.map((rk) => [rk.x - rk.w / 2 - R, rk.z - rk.d / 2 - R, rk.x + rk.w / 2 + R, rk.z + rk.d / 2 + R])
   );
 }
 

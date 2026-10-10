@@ -330,6 +330,14 @@ code { font-family: var(--mono); font-size: 0.92em; }
 .elev .eldev:hover .elbg,
 .elev .eldev.hl .elbg { stroke: #ffffff; stroke-width: 1.6; }
 .elev .eldev.hl .elbg { fill-opacity: 0.45; }
+/* cabling in the elevation: tray label, device ports, cable runs */
+.elev .traylbl { font: 6px var(--mono); fill: #6c7c92; letter-spacing: 0.06em; }
+.elev .elport.idle { opacity: 0.5; pointer-events: none; }
+.elev .elcable,
+.elev .elchit { pointer-events: stroke; cursor: pointer; }
+.elev .elcable.hl { stroke: #ffffff; stroke-width: 2.2; }
+#inspector dd .linkish { margin-top: 4px; }
+#inspector dd .linkish:first-child { margin-top: 0; }
 
 .devlist { list-style: none; margin: 0; padding: 0; }
 .devlist li { margin: 0; }

@@ -1,6 +1,6 @@
 {
   "app": "rackplanner",
-  "version": 3,
+  "version": 4,
   "name": "Hall 2 expansion",
   "info": {
     "site": "Hall 2",
@@ -17,7 +17,26 @@
       "face": "rj45",
       "defaultName": "sw-rj45-01",
       "powerW": 150,
-      "weightKg": 6
+      "weightKg": 6,
+      "ports": [
+        {
+          "name": "swp",
+          "first": 1,
+          "count": 48,
+          "connector": "rj45",
+          "speedGbps": 1,
+          "side": "front"
+        },
+        {
+          "name": "swp",
+          "first": 49,
+          "count": 4,
+          "connector": "sfp+",
+          "speedGbps": 10,
+          "side": "front"
+        }
+      ],
+      "slackM": 0
     },
     {
       "id": "switch-qsfp",
@@ -28,7 +47,40 @@
       "face": "qsfp",
       "defaultName": "sw-qsfp-01",
       "powerW": 350,
-      "weightKg": 9
+      "weightKg": 9,
+      "ports": [
+        {
+          "name": "p",
+          "first": 1,
+          "count": 24,
+          "connector": "qsfp56",
+          "speedGbps": 200,
+          "side": "front"
+        }
+      ],
+      "slackM": 0
+    },
+    {
+      "id": "switch-osfp",
+      "label": "32-port 400G switch",
+      "tag": "SWITCH",
+      "spec": "32 × OSFP",
+      "height": 1,
+      "face": "qsfp",
+      "defaultName": "sw-osfp-01",
+      "powerW": 900,
+      "weightKg": 13,
+      "ports": [
+        {
+          "name": "p",
+          "first": 1,
+          "count": 32,
+          "connector": "osfp",
+          "speedGbps": 400,
+          "side": "front"
+        }
+      ],
+      "slackM": 0
     },
     {
       "id": "compute-node",
@@ -39,7 +91,28 @@
       "face": "compute",
       "defaultName": "cn-001",
       "powerW": 700,
-      "weightKg": 25
+      "weightKg": 25,
+      "ports": [
+        {
+          "name": "bmc",
+          "connector": "rj45",
+          "speedGbps": 1,
+          "side": "rear"
+        },
+        {
+          "name": "eth0",
+          "connector": "rj45",
+          "speedGbps": 1,
+          "side": "rear"
+        },
+        {
+          "name": "ib0",
+          "connector": "qsfp56",
+          "speedGbps": 200,
+          "side": "rear"
+        }
+      ],
+      "slackM": 0.3
     },
     {
       "id": "storage-node",
@@ -50,7 +123,44 @@
       "face": "storage",
       "defaultName": "sn-01",
       "powerW": 900,
-      "weightKg": 40
+      "weightKg": 40,
+      "ports": [
+        {
+          "name": "bmc",
+          "connector": "rj45",
+          "speedGbps": 1,
+          "side": "rear"
+        },
+        {
+          "name": "eth0",
+          "connector": "rj45",
+          "speedGbps": 1,
+          "side": "rear"
+        },
+        {
+          "name": "eth1",
+          "connector": "sfp28",
+          "speedGbps": 25,
+          "side": "rear"
+        },
+        {
+          "name": "ib",
+          "first": 0,
+          "count": 2,
+          "connector": "qsfp56",
+          "speedGbps": 200,
+          "side": "rear"
+        },
+        {
+          "name": "sas",
+          "first": 0,
+          "count": 4,
+          "connector": "sas-hd",
+          "speedGbps": 12,
+          "side": "rear"
+        }
+      ],
+      "slackM": 0.3
     },
     {
       "id": "storage-enclosure",
@@ -61,7 +171,28 @@
       "face": "jbod",
       "defaultName": "jbod-01",
       "powerW": 800,
-      "weightKg": 60
+      "weightKg": 60,
+      "ports": [
+        {
+          "name": "mgmt",
+          "connector": "rj45",
+          "speedGbps": 1,
+          "side": "rear"
+        },
+        {
+          "name": "sas-a",
+          "connector": "sas-hd",
+          "speedGbps": 12,
+          "side": "rear"
+        },
+        {
+          "name": "sas-b",
+          "connector": "sas-hd",
+          "speedGbps": 12,
+          "side": "rear"
+        }
+      ],
+      "slackM": 0.3
     },
     {
       "id": "gpu-server",
@@ -72,7 +203,38 @@
       "face": "gpu",
       "defaultName": "gpu-srv-01",
       "powerW": 3000,
-      "weightKg": 65
+      "weightKg": 65,
+      "ports": [
+        {
+          "name": "bmc",
+          "connector": "rj45",
+          "speedGbps": 1,
+          "side": "rear"
+        },
+        {
+          "name": "eth0",
+          "connector": "rj45",
+          "speedGbps": 1,
+          "side": "rear"
+        },
+        {
+          "name": "eth",
+          "first": 1,
+          "count": 2,
+          "connector": "sfp28",
+          "speedGbps": 25,
+          "side": "rear"
+        },
+        {
+          "name": "ib",
+          "first": 0,
+          "count": 4,
+          "connector": "qsfp56",
+          "speedGbps": 200,
+          "side": "rear"
+        }
+      ],
+      "slackM": 0.3
     },
     {
       "id": "patch-panel",
@@ -83,7 +245,9 @@
       "face": "patch",
       "defaultName": "pp-01",
       "powerW": 0,
-      "weightKg": 2
+      "weightKg": 2,
+      "ports": [],
+      "slackM": 0
     },
     {
       "id": "pdu",
@@ -94,7 +258,16 @@
       "face": "pdu",
       "defaultName": "pdu-01",
       "powerW": 0,
-      "weightKg": 5
+      "weightKg": 5,
+      "ports": [
+        {
+          "name": "mgmt",
+          "connector": "rj45",
+          "speedGbps": 1,
+          "side": "rear"
+        }
+      ],
+      "slackM": 0
     }
   ],
   "rackTypes": [
@@ -104,7 +277,11 @@
       "units": 47,
       "sideSlots": 2,
       "powerW": 12000,
-      "weightKg": 1200
+      "weightKg": 1200,
+      "widthMm": 600,
+      "depthMm": 1200,
+      "trayM": 0.5,
+      "slackM": 0.25
     },
     {
       "id": "rack-42",
@@ -112,7 +289,11 @@
       "units": 42,
       "sideSlots": 2,
       "powerW": 8000,
-      "weightKg": 1000
+      "weightKg": 1000,
+      "widthMm": 600,
+      "depthMm": 1200,
+      "trayM": 0.5,
+      "slackM": 0.25
     },
     {
       "id": "rack-48",
@@ -120,13 +301,237 @@
       "units": 48,
       "sideSlots": 2,
       "powerW": 20000,
-      "weightKg": 1500
+      "weightKg": 1500,
+      "widthMm": 800,
+      "depthMm": 1200,
+      "trayM": 0.5,
+      "slackM": 0.25
+    }
+  ],
+  "cableTypes": [
+    {
+      "id": "cat6a",
+      "name": "Cat6a patch cord",
+      "media": "cat6a",
+      "connector": "rj45",
+      "connectorB": "rj45",
+      "legs": 1,
+      "speedGbps": 10,
+      "maxM": 100,
+      "lengthsM": [
+        0.5,
+        1,
+        1.5,
+        2,
+        3,
+        5,
+        7,
+        10,
+        15,
+        20
+      ]
+    },
+    {
+      "id": "dac-sfp28",
+      "name": "SFP28 DAC",
+      "media": "dac",
+      "connector": "sfp28",
+      "connectorB": "sfp28",
+      "legs": 1,
+      "speedGbps": 25,
+      "maxM": 5,
+      "lengthsM": [
+        0.5,
+        1,
+        1.5,
+        2,
+        3,
+        5
+      ]
+    },
+    {
+      "id": "dac-qsfp56",
+      "name": "QSFP56 DAC",
+      "media": "dac",
+      "connector": "qsfp56",
+      "connectorB": "qsfp56",
+      "legs": 1,
+      "speedGbps": 200,
+      "maxM": 3,
+      "lengthsM": [
+        0.5,
+        1,
+        1.5,
+        2,
+        2.5,
+        3
+      ]
+    },
+    {
+      "id": "aoc-qsfp56",
+      "name": "QSFP56 AOC",
+      "media": "aoc",
+      "connector": "qsfp56",
+      "connectorB": "qsfp56",
+      "legs": 1,
+      "speedGbps": 200,
+      "maxM": 100,
+      "lengthsM": [
+        3,
+        5,
+        7,
+        10,
+        15,
+        20,
+        30
+      ]
+    },
+    {
+      "id": "dac-osfp-2x",
+      "name": "OSFP to 2 × QSFP56 DAC",
+      "media": "dac",
+      "connector": "osfp",
+      "connectorB": "qsfp56",
+      "legs": 2,
+      "speedGbps": 400,
+      "maxM": 3,
+      "lengthsM": [
+        1,
+        1.5,
+        2,
+        2.5,
+        3
+      ]
+    },
+    {
+      "id": "aoc-osfp-2x",
+      "name": "OSFP to 2 × QSFP56 AOC",
+      "media": "aoc",
+      "connector": "osfp",
+      "connectorB": "qsfp56",
+      "legs": 2,
+      "speedGbps": 400,
+      "maxM": 50,
+      "lengthsM": [
+        3,
+        5,
+        7,
+        10,
+        15,
+        20
+      ]
+    },
+    {
+      "id": "lc-om4",
+      "name": "LC duplex OM4",
+      "media": "om4",
+      "connector": "lc",
+      "connectorB": "lc",
+      "legs": 1,
+      "speedGbps": 0,
+      "maxM": 0,
+      "lengthsM": [
+        1,
+        2,
+        3,
+        5,
+        7,
+        10,
+        15,
+        20,
+        30
+      ]
+    },
+    {
+      "id": "mpo-om4",
+      "name": "MPO-12 OM4",
+      "media": "om4",
+      "connector": "mpo",
+      "connectorB": "mpo",
+      "legs": 1,
+      "speedGbps": 0,
+      "maxM": 0,
+      "lengthsM": []
+    },
+    {
+      "id": "sas-hd",
+      "name": "Mini-SAS HD cable",
+      "media": "sas",
+      "connector": "sas-hd",
+      "connectorB": "sas-hd",
+      "legs": 1,
+      "speedGbps": 12,
+      "maxM": 6,
+      "lengthsM": [
+        0.5,
+        1,
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "transceivers": [
+    {
+      "id": "sfp-10g-sr",
+      "name": "SFP+ 10G SR",
+      "connector": "sfp+",
+      "fiber": "lc",
+      "mode": "mmf",
+      "speedGbps": 10,
+      "reachM": 300
+    },
+    {
+      "id": "sfp28-25g-sr",
+      "name": "SFP28 25G SR",
+      "connector": "sfp28",
+      "fiber": "lc",
+      "mode": "mmf",
+      "speedGbps": 25,
+      "reachM": 100
+    },
+    {
+      "id": "qsfp28-100g-sr4",
+      "name": "QSFP28 100G SR4",
+      "connector": "qsfp28",
+      "fiber": "mpo",
+      "mode": "mmf",
+      "speedGbps": 100,
+      "reachM": 100
+    },
+    {
+      "id": "qsfp28-100g-lr4",
+      "name": "QSFP28 100G LR4",
+      "connector": "qsfp28",
+      "fiber": "lc",
+      "mode": "smf",
+      "speedGbps": 100,
+      "reachM": 10000
+    },
+    {
+      "id": "qsfp56-200g-sr4",
+      "name": "QSFP56 200G SR4",
+      "connector": "qsfp56",
+      "fiber": "mpo",
+      "mode": "mmf",
+      "speedGbps": 200,
+      "reachM": 100
+    },
+    {
+      "id": "osfp-400g-sr4",
+      "name": "OSFP 400G SR4",
+      "connector": "osfp",
+      "fiber": "mpo",
+      "mode": "mmf",
+      "speedGbps": 400,
+      "reachM": 50
     }
   ],
   "floors": [
     {
       "id": "f1",
       "name": "Ground floor",
+      "rowPitchM": 3,
       "rows": [
         {
           "id": "row1",
@@ -135,17 +540,23 @@
             {
               "id": "r1",
               "name": "Rack A01",
-              "type": "rack-47"
+              "type": "rack-47",
+              "trayM": null,
+              "slackM": null
             },
             {
               "id": "r2",
               "name": "Rack A02",
-              "type": "rack-47"
+              "type": "rack-47",
+              "trayM": null,
+              "slackM": null
             },
             {
               "id": "r3",
               "name": "Rack A03",
-              "type": "rack-47"
+              "type": "rack-47",
+              "trayM": null,
+              "slackM": null
             }
           ]
         },
@@ -156,17 +567,23 @@
             {
               "id": "r4",
               "name": "Rack B01",
-              "type": "rack-48"
+              "type": "rack-48",
+              "trayM": null,
+              "slackM": null
             },
             {
               "id": "r5",
               "name": "Rack B02",
-              "type": "rack-48"
+              "type": "rack-48",
+              "trayM": null,
+              "slackM": null
             },
             {
               "id": "r6",
               "name": "Rack B03",
-              "type": "rack-48"
+              "type": "rack-48",
+              "trayM": null,
+              "slackM": null
             }
           ]
         }
@@ -175,6 +592,7 @@
     {
       "id": "f2",
       "name": "First floor",
+      "rowPitchM": 2.4,
       "rows": [
         {
           "id": "row3",
@@ -183,12 +601,16 @@
             {
               "id": "r7",
               "name": "Rack 2A01",
-              "type": "rack-42"
+              "type": "rack-42",
+              "trayM": null,
+              "slackM": null
             },
             {
               "id": "r8",
               "name": "Rack 2A02",
-              "type": "rack-42"
+              "type": "rack-42",
+              "trayM": null,
+              "slackM": null
             }
           ]
         }
@@ -232,727 +654,253 @@
       "color": "#1f9fc9"
     }
   ],
-  "devices": [
+  "networks": [
     {
-      "id": "ex-1",
-      "type": "switch-rj45",
-      "name": "sw-mgmt-a01",
-      "cluster": "c-net",
-      "loc": {
-        "rack": "r1",
-        "kind": "u",
-        "at": 1
-      }
+      "id": "n-mgmt",
+      "name": "Management",
+      "color": "#3aa655",
+      "firstLabel": "MGT-0001"
     },
     {
-      "id": "ex-2",
-      "type": "switch-qsfp",
-      "name": "ib-leaf-a01",
-      "cluster": "c-net",
-      "loc": {
-        "rack": "r1",
-        "kind": "u",
-        "at": 2
-      }
+      "id": "n-bmc",
+      "name": "BMC",
+      "color": "#d9a21b",
+      "firstLabel": "BMC-0001"
     },
     {
-      "id": "ex-3",
-      "type": "switch-rj45",
-      "name": "sw-mgmt-a02",
-      "cluster": "c-net",
-      "loc": {
-        "rack": "r2",
-        "kind": "u",
-        "at": 1
-      }
+      "id": "n-ib",
+      "name": "InfiniBand",
+      "color": "#2f6fdb",
+      "firstLabel": "IB-0001"
     },
     {
-      "id": "ex-4",
-      "type": "switch-qsfp",
-      "name": "ib-leaf-a02",
-      "cluster": "c-net",
-      "loc": {
-        "rack": "r2",
-        "kind": "u",
-        "at": 2
-      }
+      "id": "n-stor",
+      "name": "Storage 25G",
+      "color": "#1f9fc9",
+      "firstLabel": "ST-0001"
     },
     {
-      "id": "ex-5",
-      "type": "switch-rj45",
-      "name": "sw-mgmt-a03",
-      "cluster": "c-net",
-      "loc": {
-        "rack": "r3",
-        "kind": "u",
-        "at": 1
-      }
-    },
-    {
-      "id": "ex-6",
-      "type": "switch-qsfp",
-      "name": "ib-leaf-a03",
-      "cluster": "c-net",
-      "loc": {
-        "rack": "r3",
-        "kind": "u",
-        "at": 2
-      }
-    },
-    {
-      "id": "ex-7",
-      "type": "switch-rj45",
-      "name": "sw-bmc-a01",
-      "cluster": "c-net",
-      "loc": {
-        "rack": "r1",
-        "kind": "side",
-        "at": 0
-      }
-    },
-    {
-      "id": "ex-8",
-      "type": "switch-rj45",
-      "name": "sw-bmc-a03",
-      "cluster": "c-net",
-      "loc": {
-        "rack": "r3",
-        "kind": "side",
-        "at": 0
-      }
-    },
-    {
-      "id": "ex-9",
-      "type": "compute-node",
-      "name": "cn-001",
-      "cluster": "c-kestrel",
-      "loc": {
-        "rack": "r1",
-        "kind": "u",
-        "at": 4
-      }
-    },
-    {
-      "id": "ex-10",
-      "type": "compute-node",
-      "name": "cn-002",
-      "cluster": "c-kestrel",
-      "loc": {
-        "rack": "r1",
-        "kind": "u",
-        "at": 6
-      }
-    },
-    {
-      "id": "ex-11",
-      "type": "compute-node",
-      "name": "cn-003",
-      "cluster": "c-kestrel",
-      "loc": {
-        "rack": "r1",
-        "kind": "u",
-        "at": 8
-      }
-    },
-    {
-      "id": "ex-12",
-      "type": "compute-node",
-      "name": "cn-004",
-      "cluster": "c-kestrel",
-      "loc": {
-        "rack": "r1",
-        "kind": "u",
-        "at": 10
-      }
-    },
-    {
-      "id": "ex-13",
-      "type": "compute-node",
-      "name": "cn-005",
-      "cluster": "c-kestrel",
-      "loc": {
-        "rack": "r1",
-        "kind": "u",
-        "at": 12
-      }
-    },
-    {
-      "id": "ex-14",
-      "type": "compute-node",
-      "name": "cn-006",
-      "cluster": "c-kestrel",
-      "loc": {
-        "rack": "r1",
-        "kind": "u",
-        "at": 14
-      }
-    },
-    {
-      "id": "ex-15",
-      "type": "compute-node",
-      "name": "cn-007",
-      "cluster": "c-kestrel",
-      "loc": {
-        "rack": "r1",
-        "kind": "u",
-        "at": 16
-      }
-    },
-    {
-      "id": "ex-16",
-      "type": "compute-node",
-      "name": "cn-008",
-      "cluster": "c-kestrel",
-      "loc": {
-        "rack": "r1",
-        "kind": "u",
-        "at": 18
-      }
-    },
-    {
-      "id": "ex-17",
-      "type": "compute-node",
-      "name": "cn-009",
-      "cluster": "c-kestrel",
-      "loc": {
-        "rack": "r1",
-        "kind": "u",
-        "at": 20
-      }
-    },
-    {
-      "id": "ex-18",
-      "type": "compute-node",
-      "name": "cn-010",
-      "cluster": "c-kestrel",
-      "loc": {
-        "rack": "r1",
-        "kind": "u",
-        "at": 22
-      }
-    },
-    {
-      "id": "ex-19",
-      "type": "compute-node",
-      "name": "cn-011",
-      "cluster": "c-kestrel",
-      "loc": {
-        "rack": "r1",
-        "kind": "u",
-        "at": 24
-      }
-    },
-    {
-      "id": "ex-20",
-      "type": "compute-node",
-      "name": "cn-012",
-      "cluster": "c-kestrel",
-      "loc": {
-        "rack": "r1",
-        "kind": "u",
-        "at": 26
-      }
-    },
-    {
-      "id": "ex-21",
-      "type": "compute-node",
-      "name": "gpu-001",
-      "cluster": "c-osprey",
-      "loc": {
-        "rack": "r2",
-        "kind": "u",
-        "at": 4
-      }
-    },
-    {
-      "id": "ex-22",
-      "type": "compute-node",
-      "name": "gpu-002",
-      "cluster": "c-osprey",
-      "loc": {
-        "rack": "r2",
-        "kind": "u",
-        "at": 6
-      }
-    },
-    {
-      "id": "ex-23",
-      "type": "compute-node",
-      "name": "gpu-003",
-      "cluster": "c-osprey",
-      "loc": {
-        "rack": "r2",
-        "kind": "u",
-        "at": 8
-      }
-    },
-    {
-      "id": "ex-24",
-      "type": "compute-node",
-      "name": "gpu-004",
-      "cluster": "c-osprey",
-      "loc": {
-        "rack": "r2",
-        "kind": "u",
-        "at": 10
-      }
-    },
-    {
-      "id": "ex-25",
-      "type": "compute-node",
-      "name": "gpu-005",
-      "cluster": "c-osprey",
-      "loc": {
-        "rack": "r2",
-        "kind": "u",
-        "at": 12
-      }
-    },
-    {
-      "id": "ex-26",
-      "type": "compute-node",
-      "name": "gpu-006",
-      "cluster": "c-osprey",
-      "loc": {
-        "rack": "r2",
-        "kind": "u",
-        "at": 14
-      }
-    },
-    {
-      "id": "ex-27",
-      "type": "compute-node",
-      "name": "gpu-007",
-      "cluster": "c-osprey",
-      "loc": {
-        "rack": "r2",
-        "kind": "u",
-        "at": 16
-      }
-    },
-    {
-      "id": "ex-28",
-      "type": "compute-node",
-      "name": "gpu-008",
-      "cluster": "c-osprey",
-      "loc": {
-        "rack": "r2",
-        "kind": "u",
-        "at": 18
-      }
-    },
-    {
-      "id": "ex-29",
-      "type": "storage-node",
-      "name": "ceph-01",
-      "cluster": "c-ceph",
-      "loc": {
-        "rack": "r2",
-        "kind": "u",
-        "at": 24
-      }
-    },
-    {
-      "id": "ex-30",
-      "type": "storage-node",
-      "name": "ceph-02",
-      "cluster": "c-ceph",
-      "loc": {
-        "rack": "r2",
-        "kind": "u",
-        "at": 28
-      }
-    },
-    {
-      "id": "ex-31",
-      "type": "storage-node",
-      "name": "ceph-03",
-      "cluster": "c-ceph",
-      "loc": {
-        "rack": "r2",
-        "kind": "u",
-        "at": 32
-      }
-    },
-    {
-      "id": "ex-32",
-      "type": "storage-node",
-      "name": "oss-01",
-      "cluster": "c-lustre",
-      "loc": {
-        "rack": "r3",
-        "kind": "u",
-        "at": 4
-      }
-    },
-    {
-      "id": "ex-33",
-      "type": "storage-node",
-      "name": "oss-02",
-      "cluster": "c-lustre",
-      "loc": {
-        "rack": "r3",
-        "kind": "u",
-        "at": 8
-      }
-    },
-    {
-      "id": "ex-34",
-      "type": "storage-enclosure",
-      "name": "jbod-01",
-      "cluster": "c-lustre",
-      "loc": {
-        "rack": "r3",
-        "kind": "u",
-        "at": 12
-      }
-    },
-    {
-      "id": "ex-35",
-      "type": "storage-enclosure",
-      "name": "jbod-02",
-      "cluster": "c-lustre",
-      "loc": {
-        "rack": "r3",
-        "kind": "u",
-        "at": 16
-      }
-    },
-    {
-      "id": "ex-36",
-      "type": "storage-enclosure",
-      "name": "jbod-03",
-      "cluster": "c-lustre",
-      "loc": {
-        "rack": "r3",
-        "kind": "u",
-        "at": 20
-      }
-    },
-    {
-      "id": "ex-37",
-      "type": "storage-enclosure",
-      "name": "jbod-04",
-      "cluster": "c-lustre",
-      "loc": {
-        "rack": "r3",
-        "kind": "u",
-        "at": 24
-      }
-    },
-    {
-      "id": "ex-38",
-      "type": "patch-panel",
-      "name": "pp-b01-1",
-      "cluster": null,
-      "loc": {
-        "rack": "r4",
-        "kind": "u",
-        "at": 1
-      }
-    },
-    {
-      "id": "ex-39",
-      "type": "patch-panel",
-      "name": "pp-b01-2",
-      "cluster": null,
-      "loc": {
-        "rack": "r4",
-        "kind": "u",
-        "at": 2
-      }
-    },
-    {
-      "id": "ex-40",
-      "type": "switch-qsfp",
-      "name": "core-sw-01",
-      "cluster": "c-net",
-      "loc": {
-        "rack": "r4",
-        "kind": "u",
-        "at": 4
-      }
-    },
-    {
-      "id": "ex-41",
-      "type": "switch-qsfp",
-      "name": "core-sw-02",
-      "cluster": "c-net",
-      "loc": {
-        "rack": "r4",
-        "kind": "u",
-        "at": 5
-      }
-    },
-    {
-      "id": "ex-42",
-      "type": "switch-rj45",
-      "name": "sw-mgmt-b01",
-      "cluster": "c-net",
-      "loc": {
-        "rack": "r4",
-        "kind": "u",
-        "at": 6
-      }
-    },
-    {
-      "id": "ex-43",
-      "type": "reserved",
-      "name": "Core expansion",
-      "cluster": null,
-      "notes": "Second spine pair, next budget year",
-      "height": 6,
-      "loc": {
-        "rack": "r4",
-        "kind": "u",
-        "at": 8
-      }
-    },
-    {
-      "id": "ex-44",
-      "type": "pdu",
-      "name": "pdu-b01-a",
-      "cluster": null,
-      "loc": {
-        "rack": "r4",
-        "kind": "side",
-        "at": 0
-      }
-    },
-    {
-      "id": "ex-45",
-      "type": "pdu",
-      "name": "pdu-b01-b",
-      "cluster": null,
-      "loc": {
-        "rack": "r4",
-        "kind": "side",
-        "at": 1
-      }
-    },
-    {
-      "id": "ex-46",
-      "type": "pdu",
-      "name": "pdu-b02-a",
-      "cluster": null,
-      "loc": {
-        "rack": "r5",
-        "kind": "side",
-        "at": 0
-      }
-    },
-    {
-      "id": "ex-47",
-      "type": "pdu",
-      "name": "pdu-b02-b",
-      "cluster": null,
-      "loc": {
-        "rack": "r5",
-        "kind": "side",
-        "at": 1
-      }
-    },
-    {
-      "id": "ex-48",
-      "type": "pdu",
-      "name": "pdu-b03-a",
-      "cluster": null,
-      "loc": {
-        "rack": "r6",
-        "kind": "side",
-        "at": 0
-      }
-    },
-    {
-      "id": "ex-49",
-      "type": "pdu",
-      "name": "pdu-b03-b",
-      "cluster": null,
-      "loc": {
-        "rack": "r6",
-        "kind": "side",
-        "at": 1
-      }
-    },
-    {
-      "id": "ex-50",
-      "type": "switch-qsfp",
-      "name": "ib-leaf-b02",
-      "cluster": "c-heron",
-      "loc": {
-        "rack": "r5",
-        "kind": "u",
-        "at": 1
-      }
-    },
-    {
-      "id": "ex-51",
-      "type": "switch-qsfp",
-      "name": "ib-leaf-b03",
-      "cluster": "c-heron",
-      "loc": {
-        "rack": "r6",
-        "kind": "u",
-        "at": 1
-      }
-    },
-    {
-      "id": "ex-52",
-      "type": "gpu-server",
-      "name": "gpu-srv-01",
-      "cluster": "c-heron",
-      "loc": {
-        "rack": "r5",
-        "kind": "u",
-        "at": 3
-      }
-    },
-    {
-      "id": "ex-53",
-      "type": "gpu-server",
-      "name": "gpu-srv-02",
-      "cluster": "c-heron",
-      "loc": {
-        "rack": "r5",
-        "kind": "u",
-        "at": 7
-      }
-    },
-    {
-      "id": "ex-54",
-      "type": "gpu-server",
-      "name": "gpu-srv-03",
-      "cluster": "c-heron",
-      "loc": {
-        "rack": "r5",
-        "kind": "u",
-        "at": 11
-      }
-    },
-    {
-      "id": "ex-55",
-      "type": "gpu-server",
-      "name": "gpu-srv-04",
-      "cluster": "c-heron",
-      "loc": {
-        "rack": "r6",
-        "kind": "u",
-        "at": 3
-      }
-    },
-    {
-      "id": "ex-56",
-      "type": "gpu-server",
-      "name": "gpu-srv-05",
-      "cluster": "c-heron",
-      "loc": {
-        "rack": "r6",
-        "kind": "u",
-        "at": 7
-      }
-    },
-    {
-      "id": "ex-57",
-      "type": "gpu-server",
-      "name": "gpu-srv-06",
-      "cluster": "c-heron",
-      "loc": {
-        "rack": "r6",
-        "kind": "u",
-        "at": 11
-      }
-    },
-    {
-      "id": "ex-58",
-      "type": "reserved",
-      "name": "GPU batch 2",
-      "cluster": "c-heron",
-      "notes": "Two more GPU servers, power already booked",
-      "powerW": 6000,
-      "height": 8,
-      "loc": {
-        "rack": "r6",
-        "kind": "u",
-        "at": 16
-      }
-    },
-    {
-      "id": "ex-59",
-      "type": "switch-rj45",
-      "name": "sw-arc-01",
-      "cluster": "c-archive",
-      "loc": {
-        "rack": "r7",
-        "kind": "u",
-        "at": 1
-      }
-    },
-    {
-      "id": "ex-60",
-      "type": "storage-node",
-      "name": "arc-01",
-      "cluster": "c-archive",
-      "loc": {
-        "rack": "r7",
-        "kind": "u",
-        "at": 3
-      }
-    },
-    {
-      "id": "ex-61",
-      "type": "storage-node",
-      "name": "arc-02",
-      "cluster": "c-archive",
-      "loc": {
-        "rack": "r8",
-        "kind": "u",
-        "at": 3
-      }
-    },
-    {
-      "id": "ex-62",
-      "type": "storage-enclosure",
-      "name": "arc-jbod-01",
-      "cluster": "c-archive",
-      "loc": {
-        "rack": "r7",
-        "kind": "u",
-        "at": 7
-      }
-    },
-    {
-      "id": "ex-63",
-      "type": "storage-enclosure",
-      "name": "arc-jbod-02",
-      "cluster": "c-archive",
-      "loc": {
-        "rack": "r7",
-        "kind": "u",
-        "at": 11
-      }
-    },
-    {
-      "id": "ex-64",
-      "type": "storage-enclosure",
-      "name": "arc-jbod-03",
-      "cluster": "c-archive",
-      "loc": {
-        "rack": "r8",
-        "kind": "u",
-        "at": 7
-      }
-    },
-    {
-      "id": "ex-65",
-      "type": "storage-enclosure",
-      "name": "arc-jbod-04",
-      "cluster": "c-archive",
-      "loc": {
-        "rack": "r8",
-        "kind": "u",
-        "at": 11
-      }
+      "id": "n-sas",
+      "name": "SAS",
+      "color": "#8a5cd6",
+      "firstLabel": "SAS-0001"
     }
+  ],
+  "devices": [
+    {"id":"ex-1","type":"switch-rj45","name":"sw-mgmt-a01","cluster":"c-net","reversed":true,"loc":{"rack":"r1","kind":"u","at":1}},
+    {"id":"ex-2","type":"switch-qsfp","name":"ib-leaf-a01","cluster":"c-net","reversed":true,"loc":{"rack":"r1","kind":"u","at":2}},
+    {"id":"ex-3","type":"switch-rj45","name":"sw-mgmt-a02","cluster":"c-net","reversed":true,"loc":{"rack":"r2","kind":"u","at":1}},
+    {"id":"ex-4","type":"switch-qsfp","name":"ib-leaf-a02","cluster":"c-net","reversed":true,"loc":{"rack":"r2","kind":"u","at":2}},
+    {"id":"ex-5","type":"switch-rj45","name":"sw-mgmt-a03","cluster":"c-net","reversed":true,"loc":{"rack":"r3","kind":"u","at":1}},
+    {"id":"ex-6","type":"switch-qsfp","name":"ib-leaf-a03","cluster":"c-net","reversed":true,"loc":{"rack":"r3","kind":"u","at":2}},
+    {"id":"ex-7","type":"switch-rj45","name":"sw-bmc-a01","cluster":"c-net","reversed":true,"loc":{"rack":"r1","kind":"side","at":0}},
+    {"id":"ex-8","type":"switch-rj45","name":"sw-bmc-a03","cluster":"c-net","reversed":true,"loc":{"rack":"r3","kind":"side","at":0}},
+    {"id":"ex-9","type":"compute-node","name":"cn-001","cluster":"c-kestrel","loc":{"rack":"r1","kind":"u","at":4}},
+    {"id":"ex-10","type":"compute-node","name":"cn-002","cluster":"c-kestrel","loc":{"rack":"r1","kind":"u","at":6}},
+    {"id":"ex-11","type":"compute-node","name":"cn-003","cluster":"c-kestrel","loc":{"rack":"r1","kind":"u","at":8}},
+    {"id":"ex-12","type":"compute-node","name":"cn-004","cluster":"c-kestrel","loc":{"rack":"r1","kind":"u","at":10}},
+    {"id":"ex-13","type":"compute-node","name":"cn-005","cluster":"c-kestrel","loc":{"rack":"r1","kind":"u","at":12}},
+    {"id":"ex-14","type":"compute-node","name":"cn-006","cluster":"c-kestrel","loc":{"rack":"r1","kind":"u","at":14}},
+    {"id":"ex-15","type":"compute-node","name":"cn-007","cluster":"c-kestrel","loc":{"rack":"r1","kind":"u","at":16}},
+    {"id":"ex-16","type":"compute-node","name":"cn-008","cluster":"c-kestrel","loc":{"rack":"r1","kind":"u","at":18}},
+    {"id":"ex-17","type":"compute-node","name":"cn-009","cluster":"c-kestrel","loc":{"rack":"r1","kind":"u","at":20}},
+    {"id":"ex-18","type":"compute-node","name":"cn-010","cluster":"c-kestrel","loc":{"rack":"r1","kind":"u","at":22}},
+    {"id":"ex-19","type":"compute-node","name":"cn-011","cluster":"c-kestrel","loc":{"rack":"r1","kind":"u","at":24}},
+    {"id":"ex-20","type":"compute-node","name":"cn-012","cluster":"c-kestrel","loc":{"rack":"r1","kind":"u","at":26}},
+    {"id":"ex-21","type":"compute-node","name":"gpu-001","cluster":"c-osprey","loc":{"rack":"r2","kind":"u","at":4}},
+    {"id":"ex-22","type":"compute-node","name":"gpu-002","cluster":"c-osprey","loc":{"rack":"r2","kind":"u","at":6}},
+    {"id":"ex-23","type":"compute-node","name":"gpu-003","cluster":"c-osprey","loc":{"rack":"r2","kind":"u","at":8}},
+    {"id":"ex-24","type":"compute-node","name":"gpu-004","cluster":"c-osprey","loc":{"rack":"r2","kind":"u","at":10}},
+    {"id":"ex-25","type":"compute-node","name":"gpu-005","cluster":"c-osprey","loc":{"rack":"r2","kind":"u","at":12}},
+    {"id":"ex-26","type":"compute-node","name":"gpu-006","cluster":"c-osprey","loc":{"rack":"r2","kind":"u","at":14}},
+    {"id":"ex-27","type":"compute-node","name":"gpu-007","cluster":"c-osprey","loc":{"rack":"r2","kind":"u","at":16}},
+    {"id":"ex-28","type":"compute-node","name":"gpu-008","cluster":"c-osprey","loc":{"rack":"r2","kind":"u","at":18}},
+    {"id":"ex-29","type":"storage-node","name":"ceph-01","cluster":"c-ceph","loc":{"rack":"r2","kind":"u","at":24}},
+    {"id":"ex-30","type":"storage-node","name":"ceph-02","cluster":"c-ceph","loc":{"rack":"r2","kind":"u","at":28}},
+    {"id":"ex-31","type":"storage-node","name":"ceph-03","cluster":"c-ceph","loc":{"rack":"r2","kind":"u","at":32}},
+    {"id":"ex-32","type":"storage-node","name":"oss-01","cluster":"c-lustre","loc":{"rack":"r3","kind":"u","at":4}},
+    {"id":"ex-33","type":"storage-node","name":"oss-02","cluster":"c-lustre","loc":{"rack":"r3","kind":"u","at":8}},
+    {"id":"ex-34","type":"storage-enclosure","name":"jbod-01","cluster":"c-lustre","loc":{"rack":"r3","kind":"u","at":12}},
+    {"id":"ex-35","type":"storage-enclosure","name":"jbod-02","cluster":"c-lustre","loc":{"rack":"r3","kind":"u","at":16}},
+    {"id":"ex-36","type":"storage-enclosure","name":"jbod-03","cluster":"c-lustre","loc":{"rack":"r3","kind":"u","at":20}},
+    {"id":"ex-37","type":"storage-enclosure","name":"jbod-04","cluster":"c-lustre","loc":{"rack":"r3","kind":"u","at":24}},
+    {"id":"ex-38","type":"patch-panel","name":"pp-b01-1","cluster":null,"loc":{"rack":"r4","kind":"u","at":1}},
+    {"id":"ex-39","type":"patch-panel","name":"pp-b01-2","cluster":null,"loc":{"rack":"r4","kind":"u","at":2}},
+    {"id":"ex-40","type":"switch-qsfp","name":"core-sw-01","cluster":"c-net","reversed":true,"loc":{"rack":"r4","kind":"u","at":4}},
+    {"id":"ex-41","type":"switch-qsfp","name":"core-sw-02","cluster":"c-net","reversed":true,"loc":{"rack":"r4","kind":"u","at":5}},
+    {"id":"ex-42","type":"switch-rj45","name":"sw-mgmt-b01","cluster":"c-net","reversed":true,"loc":{"rack":"r4","kind":"u","at":6}},
+    {"id":"ex-43","type":"reserved","name":"Core expansion","cluster":null,"notes":"Second spine pair, next budget year","height":6,"loc":{"rack":"r4","kind":"u","at":8}},
+    {"id":"ex-44","type":"pdu","name":"pdu-b01-a","cluster":null,"loc":{"rack":"r4","kind":"side","at":0}},
+    {"id":"ex-45","type":"pdu","name":"pdu-b01-b","cluster":null,"loc":{"rack":"r4","kind":"side","at":1}},
+    {"id":"ex-46","type":"pdu","name":"pdu-b02-a","cluster":null,"loc":{"rack":"r5","kind":"side","at":0}},
+    {"id":"ex-47","type":"pdu","name":"pdu-b02-b","cluster":null,"loc":{"rack":"r5","kind":"side","at":1}},
+    {"id":"ex-48","type":"pdu","name":"pdu-b03-a","cluster":null,"loc":{"rack":"r6","kind":"side","at":0}},
+    {"id":"ex-49","type":"pdu","name":"pdu-b03-b","cluster":null,"loc":{"rack":"r6","kind":"side","at":1}},
+    {"id":"ex-50","type":"switch-osfp","name":"ib-leaf-b02","cluster":"c-heron","reversed":true,"loc":{"rack":"r5","kind":"u","at":1}},
+    {"id":"ex-51","type":"switch-osfp","name":"ib-leaf-b03","cluster":"c-heron","reversed":true,"loc":{"rack":"r6","kind":"u","at":1}},
+    {"id":"ex-52","type":"gpu-server","name":"gpu-srv-01","cluster":"c-heron","loc":{"rack":"r5","kind":"u","at":3}},
+    {"id":"ex-53","type":"gpu-server","name":"gpu-srv-02","cluster":"c-heron","loc":{"rack":"r5","kind":"u","at":7}},
+    {"id":"ex-54","type":"gpu-server","name":"gpu-srv-03","cluster":"c-heron","loc":{"rack":"r5","kind":"u","at":11}},
+    {"id":"ex-55","type":"gpu-server","name":"gpu-srv-04","cluster":"c-heron","loc":{"rack":"r6","kind":"u","at":3}},
+    {"id":"ex-56","type":"gpu-server","name":"gpu-srv-05","cluster":"c-heron","loc":{"rack":"r6","kind":"u","at":7}},
+    {"id":"ex-57","type":"gpu-server","name":"gpu-srv-06","cluster":"c-heron","loc":{"rack":"r6","kind":"u","at":11}},
+    {"id":"ex-58","type":"reserved","name":"GPU batch 2","cluster":"c-heron","notes":"Two more GPU servers, power already booked","powerW":6000,"height":8,"loc":{"rack":"r6","kind":"u","at":16}},
+    {"id":"ex-59","type":"switch-rj45","name":"sw-arc-01","cluster":"c-archive","reversed":true,"loc":{"rack":"r7","kind":"u","at":1}},
+    {"id":"ex-60","type":"storage-node","name":"arc-01","cluster":"c-archive","loc":{"rack":"r7","kind":"u","at":3}},
+    {"id":"ex-61","type":"storage-node","name":"arc-02","cluster":"c-archive","loc":{"rack":"r8","kind":"u","at":3}},
+    {"id":"ex-62","type":"storage-enclosure","name":"arc-jbod-01","cluster":"c-archive","loc":{"rack":"r7","kind":"u","at":7}},
+    {"id":"ex-63","type":"storage-enclosure","name":"arc-jbod-02","cluster":"c-archive","loc":{"rack":"r7","kind":"u","at":11}},
+    {"id":"ex-64","type":"storage-enclosure","name":"arc-jbod-03","cluster":"c-archive","loc":{"rack":"r8","kind":"u","at":7}},
+    {"id":"ex-65","type":"storage-enclosure","name":"arc-jbod-04","cluster":"c-archive","loc":{"rack":"r8","kind":"u","at":11}}
+  ],
+  "cables": [
+    {"id":"cb-1","type":null,"network":"n-mgmt","label":"MGT-0001","lengthM":null,"notes":"","a":{"device":"ex-9","port":"eth0"},"b":{"device":"ex-1","port":"swp1"}},
+    {"id":"cb-2","type":null,"network":"n-bmc","label":"BMC-0001","lengthM":null,"notes":"","a":{"device":"ex-9","port":"bmc"},"b":{"device":"ex-7","port":"swp1"}},
+    {"id":"cb-3","type":null,"network":"n-ib","label":"IB-0001","lengthM":null,"notes":"","a":{"device":"ex-9","port":"ib0"},"b":{"device":"ex-2","port":"p1"}},
+    {"id":"cb-4","type":null,"network":"n-mgmt","label":"MGT-0002","lengthM":null,"notes":"","a":{"device":"ex-10","port":"eth0"},"b":{"device":"ex-1","port":"swp2"}},
+    {"id":"cb-5","type":null,"network":"n-bmc","label":"BMC-0002","lengthM":null,"notes":"","a":{"device":"ex-10","port":"bmc"},"b":{"device":"ex-7","port":"swp2"}},
+    {"id":"cb-6","type":null,"network":"n-ib","label":"IB-0002","lengthM":null,"notes":"","a":{"device":"ex-10","port":"ib0"},"b":{"device":"ex-2","port":"p2"}},
+    {"id":"cb-7","type":null,"network":"n-mgmt","label":"MGT-0003","lengthM":null,"notes":"","a":{"device":"ex-11","port":"eth0"},"b":{"device":"ex-1","port":"swp3"}},
+    {"id":"cb-8","type":null,"network":"n-bmc","label":"BMC-0003","lengthM":null,"notes":"","a":{"device":"ex-11","port":"bmc"},"b":{"device":"ex-7","port":"swp3"}},
+    {"id":"cb-9","type":null,"network":"n-ib","label":"IB-0003","lengthM":null,"notes":"","a":{"device":"ex-11","port":"ib0"},"b":{"device":"ex-2","port":"p3"}},
+    {"id":"cb-10","type":null,"network":"n-mgmt","label":"MGT-0004","lengthM":null,"notes":"","a":{"device":"ex-12","port":"eth0"},"b":{"device":"ex-1","port":"swp4"}},
+    {"id":"cb-11","type":null,"network":"n-bmc","label":"BMC-0004","lengthM":null,"notes":"","a":{"device":"ex-12","port":"bmc"},"b":{"device":"ex-7","port":"swp4"}},
+    {"id":"cb-12","type":null,"network":"n-ib","label":"IB-0004","lengthM":null,"notes":"","a":{"device":"ex-12","port":"ib0"},"b":{"device":"ex-2","port":"p4"}},
+    {"id":"cb-13","type":null,"network":"n-mgmt","label":"MGT-0005","lengthM":null,"notes":"","a":{"device":"ex-13","port":"eth0"},"b":{"device":"ex-1","port":"swp5"}},
+    {"id":"cb-14","type":null,"network":"n-bmc","label":"BMC-0005","lengthM":null,"notes":"","a":{"device":"ex-13","port":"bmc"},"b":{"device":"ex-7","port":"swp5"}},
+    {"id":"cb-15","type":null,"network":"n-ib","label":"IB-0005","lengthM":null,"notes":"","a":{"device":"ex-13","port":"ib0"},"b":{"device":"ex-2","port":"p5"}},
+    {"id":"cb-16","type":null,"network":"n-mgmt","label":"MGT-0006","lengthM":null,"notes":"","a":{"device":"ex-14","port":"eth0"},"b":{"device":"ex-1","port":"swp6"}},
+    {"id":"cb-17","type":null,"network":"n-bmc","label":"BMC-0006","lengthM":null,"notes":"","a":{"device":"ex-14","port":"bmc"},"b":{"device":"ex-7","port":"swp6"}},
+    {"id":"cb-18","type":null,"network":"n-ib","label":"IB-0006","lengthM":null,"notes":"","a":{"device":"ex-14","port":"ib0"},"b":{"device":"ex-2","port":"p6"}},
+    {"id":"cb-19","type":null,"network":"n-mgmt","label":"MGT-0007","lengthM":null,"notes":"","a":{"device":"ex-15","port":"eth0"},"b":{"device":"ex-1","port":"swp7"}},
+    {"id":"cb-20","type":null,"network":"n-bmc","label":"BMC-0007","lengthM":null,"notes":"","a":{"device":"ex-15","port":"bmc"},"b":{"device":"ex-7","port":"swp7"}},
+    {"id":"cb-21","type":null,"network":"n-ib","label":"IB-0007","lengthM":null,"notes":"","a":{"device":"ex-15","port":"ib0"},"b":{"device":"ex-2","port":"p7"}},
+    {"id":"cb-22","type":null,"network":"n-mgmt","label":"MGT-0008","lengthM":null,"notes":"","a":{"device":"ex-16","port":"eth0"},"b":{"device":"ex-1","port":"swp8"}},
+    {"id":"cb-23","type":null,"network":"n-bmc","label":"BMC-0008","lengthM":null,"notes":"","a":{"device":"ex-16","port":"bmc"},"b":{"device":"ex-7","port":"swp8"}},
+    {"id":"cb-24","type":null,"network":"n-ib","label":"IB-0008","lengthM":null,"notes":"","a":{"device":"ex-16","port":"ib0"},"b":{"device":"ex-2","port":"p8"}},
+    {"id":"cb-25","type":null,"network":"n-mgmt","label":"MGT-0009","lengthM":null,"notes":"","a":{"device":"ex-17","port":"eth0"},"b":{"device":"ex-1","port":"swp9"}},
+    {"id":"cb-26","type":null,"network":"n-bmc","label":"BMC-0009","lengthM":null,"notes":"","a":{"device":"ex-17","port":"bmc"},"b":{"device":"ex-7","port":"swp9"}},
+    {"id":"cb-27","type":null,"network":"n-ib","label":"IB-0009","lengthM":null,"notes":"","a":{"device":"ex-17","port":"ib0"},"b":{"device":"ex-2","port":"p9"}},
+    {"id":"cb-28","type":null,"network":"n-mgmt","label":"MGT-0010","lengthM":null,"notes":"","a":{"device":"ex-18","port":"eth0"},"b":{"device":"ex-1","port":"swp10"}},
+    {"id":"cb-29","type":null,"network":"n-bmc","label":"BMC-0010","lengthM":null,"notes":"","a":{"device":"ex-18","port":"bmc"},"b":{"device":"ex-7","port":"swp10"}},
+    {"id":"cb-30","type":null,"network":"n-ib","label":"IB-0010","lengthM":null,"notes":"","a":{"device":"ex-18","port":"ib0"},"b":{"device":"ex-2","port":"p10"}},
+    {"id":"cb-31","type":null,"network":"n-mgmt","label":"MGT-0011","lengthM":null,"notes":"","a":{"device":"ex-19","port":"eth0"},"b":{"device":"ex-1","port":"swp11"}},
+    {"id":"cb-32","type":null,"network":"n-bmc","label":"BMC-0011","lengthM":null,"notes":"","a":{"device":"ex-19","port":"bmc"},"b":{"device":"ex-7","port":"swp11"}},
+    {"id":"cb-33","type":null,"network":"n-ib","label":"IB-0011","lengthM":null,"notes":"","a":{"device":"ex-19","port":"ib0"},"b":{"device":"ex-2","port":"p11"}},
+    {"id":"cb-34","type":null,"network":"n-mgmt","label":"MGT-0012","lengthM":null,"notes":"","a":{"device":"ex-20","port":"eth0"},"b":{"device":"ex-1","port":"swp12"}},
+    {"id":"cb-35","type":null,"network":"n-bmc","label":"BMC-0012","lengthM":null,"notes":"","a":{"device":"ex-20","port":"bmc"},"b":{"device":"ex-7","port":"swp12"}},
+    {"id":"cb-36","type":null,"network":"n-ib","label":"IB-0012","lengthM":null,"notes":"","a":{"device":"ex-20","port":"ib0"},"b":{"device":"ex-2","port":"p12"}},
+    {"id":"cb-37","type":null,"network":"n-mgmt","label":"MGT-0013","lengthM":null,"notes":"","a":{"device":"ex-21","port":"eth0"},"b":{"device":"ex-3","port":"swp1"}},
+    {"id":"cb-38","type":null,"network":"n-bmc","label":"BMC-0013","lengthM":null,"notes":"","a":{"device":"ex-21","port":"bmc"},"b":{"device":"ex-7","port":"swp13"}},
+    {"id":"cb-39","type":null,"network":"n-ib","label":"IB-0013","lengthM":null,"notes":"","a":{"device":"ex-21","port":"ib0"},"b":{"device":"ex-4","port":"p1"}},
+    {"id":"cb-40","type":null,"network":"n-mgmt","label":"MGT-0014","lengthM":null,"notes":"","a":{"device":"ex-22","port":"eth0"},"b":{"device":"ex-3","port":"swp2"}},
+    {"id":"cb-41","type":null,"network":"n-bmc","label":"BMC-0014","lengthM":null,"notes":"","a":{"device":"ex-22","port":"bmc"},"b":{"device":"ex-7","port":"swp14"}},
+    {"id":"cb-42","type":null,"network":"n-ib","label":"IB-0014","lengthM":null,"notes":"","a":{"device":"ex-22","port":"ib0"},"b":{"device":"ex-4","port":"p2"}},
+    {"id":"cb-43","type":null,"network":"n-mgmt","label":"MGT-0015","lengthM":null,"notes":"","a":{"device":"ex-23","port":"eth0"},"b":{"device":"ex-3","port":"swp3"}},
+    {"id":"cb-44","type":null,"network":"n-bmc","label":"BMC-0015","lengthM":null,"notes":"","a":{"device":"ex-23","port":"bmc"},"b":{"device":"ex-7","port":"swp15"}},
+    {"id":"cb-45","type":null,"network":"n-ib","label":"IB-0015","lengthM":null,"notes":"","a":{"device":"ex-23","port":"ib0"},"b":{"device":"ex-4","port":"p3"}},
+    {"id":"cb-46","type":null,"network":"n-mgmt","label":"MGT-0016","lengthM":null,"notes":"","a":{"device":"ex-24","port":"eth0"},"b":{"device":"ex-3","port":"swp4"}},
+    {"id":"cb-47","type":null,"network":"n-bmc","label":"BMC-0016","lengthM":null,"notes":"","a":{"device":"ex-24","port":"bmc"},"b":{"device":"ex-7","port":"swp16"}},
+    {"id":"cb-48","type":null,"network":"n-ib","label":"IB-0016","lengthM":null,"notes":"","a":{"device":"ex-24","port":"ib0"},"b":{"device":"ex-4","port":"p4"}},
+    {"id":"cb-49","type":null,"network":"n-mgmt","label":"MGT-0017","lengthM":null,"notes":"","a":{"device":"ex-25","port":"eth0"},"b":{"device":"ex-3","port":"swp5"}},
+    {"id":"cb-50","type":null,"network":"n-bmc","label":"BMC-0017","lengthM":null,"notes":"","a":{"device":"ex-25","port":"bmc"},"b":{"device":"ex-7","port":"swp17"}},
+    {"id":"cb-51","type":null,"network":"n-ib","label":"IB-0017","lengthM":null,"notes":"","a":{"device":"ex-25","port":"ib0"},"b":{"device":"ex-4","port":"p5"}},
+    {"id":"cb-52","type":null,"network":"n-mgmt","label":"MGT-0018","lengthM":null,"notes":"","a":{"device":"ex-26","port":"eth0"},"b":{"device":"ex-3","port":"swp6"}},
+    {"id":"cb-53","type":null,"network":"n-bmc","label":"BMC-0018","lengthM":null,"notes":"","a":{"device":"ex-26","port":"bmc"},"b":{"device":"ex-7","port":"swp18"}},
+    {"id":"cb-54","type":null,"network":"n-ib","label":"IB-0018","lengthM":null,"notes":"","a":{"device":"ex-26","port":"ib0"},"b":{"device":"ex-4","port":"p6"}},
+    {"id":"cb-55","type":null,"network":"n-mgmt","label":"MGT-0019","lengthM":null,"notes":"","a":{"device":"ex-27","port":"eth0"},"b":{"device":"ex-3","port":"swp7"}},
+    {"id":"cb-56","type":null,"network":"n-bmc","label":"BMC-0019","lengthM":null,"notes":"","a":{"device":"ex-27","port":"bmc"},"b":{"device":"ex-7","port":"swp19"}},
+    {"id":"cb-57","type":null,"network":"n-ib","label":"IB-0019","lengthM":null,"notes":"","a":{"device":"ex-27","port":"ib0"},"b":{"device":"ex-4","port":"p7"}},
+    {"id":"cb-58","type":null,"network":"n-mgmt","label":"MGT-0020","lengthM":null,"notes":"","a":{"device":"ex-28","port":"eth0"},"b":{"device":"ex-3","port":"swp8"}},
+    {"id":"cb-59","type":null,"network":"n-bmc","label":"BMC-0020","lengthM":null,"notes":"","a":{"device":"ex-28","port":"bmc"},"b":{"device":"ex-7","port":"swp20"}},
+    {"id":"cb-60","type":null,"network":"n-ib","label":"IB-0020","lengthM":null,"notes":"","a":{"device":"ex-28","port":"ib0"},"b":{"device":"ex-4","port":"p8"}},
+    {"id":"cb-61","type":null,"network":"n-mgmt","label":"MGT-0021","lengthM":null,"notes":"","a":{"device":"ex-29","port":"eth0"},"b":{"device":"ex-3","port":"swp9"}},
+    {"id":"cb-62","type":null,"network":"n-stor","label":"ST-0001","lengthM":null,"notes":"","a":{"device":"ex-29","port":"eth1"},"b":{"device":"ex-3","port":"swp49"}},
+    {"id":"cb-63","type":null,"network":"n-bmc","label":"BMC-0021","lengthM":null,"notes":"","a":{"device":"ex-29","port":"bmc"},"b":{"device":"ex-8","port":"swp1"}},
+    {"id":"cb-64","type":null,"network":"n-ib","label":"IB-0021","lengthM":null,"notes":"","a":{"device":"ex-29","port":"ib0"},"b":{"device":"ex-4","port":"p9"}},
+    {"id":"cb-65","type":null,"network":"n-ib","label":"IB-0022","lengthM":null,"notes":"","a":{"device":"ex-29","port":"ib1"},"b":{"device":"ex-6","port":"p9"}},
+    {"id":"cb-66","type":null,"network":"n-mgmt","label":"MGT-0022","lengthM":null,"notes":"","a":{"device":"ex-30","port":"eth0"},"b":{"device":"ex-3","port":"swp10"}},
+    {"id":"cb-67","type":null,"network":"n-stor","label":"ST-0002","lengthM":null,"notes":"","a":{"device":"ex-30","port":"eth1"},"b":{"device":"ex-3","port":"swp50"}},
+    {"id":"cb-68","type":null,"network":"n-bmc","label":"BMC-0022","lengthM":null,"notes":"","a":{"device":"ex-30","port":"bmc"},"b":{"device":"ex-8","port":"swp2"}},
+    {"id":"cb-69","type":null,"network":"n-ib","label":"IB-0023","lengthM":null,"notes":"","a":{"device":"ex-30","port":"ib0"},"b":{"device":"ex-4","port":"p10"}},
+    {"id":"cb-70","type":null,"network":"n-ib","label":"IB-0024","lengthM":null,"notes":"","a":{"device":"ex-30","port":"ib1"},"b":{"device":"ex-6","port":"p10"}},
+    {"id":"cb-71","type":null,"network":"n-mgmt","label":"MGT-0023","lengthM":null,"notes":"","a":{"device":"ex-31","port":"eth0"},"b":{"device":"ex-3","port":"swp11"}},
+    {"id":"cb-72","type":null,"network":"n-stor","label":"ST-0003","lengthM":null,"notes":"","a":{"device":"ex-31","port":"eth1"},"b":{"device":"ex-3","port":"swp51"}},
+    {"id":"cb-73","type":null,"network":"n-bmc","label":"BMC-0023","lengthM":null,"notes":"","a":{"device":"ex-31","port":"bmc"},"b":{"device":"ex-8","port":"swp3"}},
+    {"id":"cb-74","type":null,"network":"n-ib","label":"IB-0025","lengthM":null,"notes":"","a":{"device":"ex-31","port":"ib0"},"b":{"device":"ex-4","port":"p11"}},
+    {"id":"cb-75","type":"dac-qsfp56","network":"n-ib","label":"IB-0026","lengthM":null,"notes":"","a":{"device":"ex-31","port":"ib1"},"b":{"device":"ex-6","port":"p11"}},
+    {"id":"cb-76","type":null,"network":"n-mgmt","label":"MGT-0024","lengthM":null,"notes":"","a":{"device":"ex-32","port":"eth0"},"b":{"device":"ex-5","port":"swp1"}},
+    {"id":"cb-77","type":null,"network":"n-bmc","label":"BMC-0024","lengthM":null,"notes":"","a":{"device":"ex-32","port":"bmc"},"b":{"device":"ex-8","port":"swp4"}},
+    {"id":"cb-78","type":null,"network":"n-ib","label":"IB-0027","lengthM":null,"notes":"","a":{"device":"ex-32","port":"ib0"},"b":{"device":"ex-6","port":"p1"}},
+    {"id":"cb-79","type":null,"network":"n-ib","label":"IB-0028","lengthM":null,"notes":"","a":{"device":"ex-32","port":"ib1"},"b":{"device":"ex-6","port":"p2"}},
+    {"id":"cb-80","type":null,"network":"n-sas","label":"SAS-0001","lengthM":null,"notes":"","a":{"device":"ex-32","port":"sas0"},"b":{"device":"ex-34","port":"sas-a"}},
+    {"id":"cb-81","type":null,"network":"n-sas","label":"SAS-0002","lengthM":null,"notes":"","a":{"device":"ex-32","port":"sas1"},"b":{"device":"ex-35","port":"sas-a"}},
+    {"id":"cb-82","type":null,"network":"n-sas","label":"SAS-0003","lengthM":null,"notes":"","a":{"device":"ex-32","port":"sas2"},"b":{"device":"ex-36","port":"sas-a"}},
+    {"id":"cb-83","type":null,"network":"n-sas","label":"SAS-0004","lengthM":null,"notes":"","a":{"device":"ex-32","port":"sas3"},"b":{"device":"ex-37","port":"sas-a"}},
+    {"id":"cb-84","type":null,"network":"n-mgmt","label":"MGT-0025","lengthM":null,"notes":"","a":{"device":"ex-33","port":"eth0"},"b":{"device":"ex-5","port":"swp2"}},
+    {"id":"cb-85","type":null,"network":"n-bmc","label":"BMC-0025","lengthM":null,"notes":"","a":{"device":"ex-33","port":"bmc"},"b":{"device":"ex-8","port":"swp5"}},
+    {"id":"cb-86","type":null,"network":"n-ib","label":"IB-0029","lengthM":null,"notes":"","a":{"device":"ex-33","port":"ib0"},"b":{"device":"ex-6","port":"p3"}},
+    {"id":"cb-87","type":null,"network":"n-ib","label":"IB-0030","lengthM":null,"notes":"","a":{"device":"ex-33","port":"ib1"},"b":{"device":"ex-6","port":"p4"}},
+    {"id":"cb-88","type":null,"network":"n-sas","label":"SAS-0005","lengthM":null,"notes":"","a":{"device":"ex-33","port":"sas0"},"b":{"device":"ex-34","port":"sas-b"}},
+    {"id":"cb-89","type":null,"network":"n-sas","label":"SAS-0006","lengthM":null,"notes":"","a":{"device":"ex-33","port":"sas1"},"b":{"device":"ex-35","port":"sas-b"}},
+    {"id":"cb-90","type":null,"network":"n-sas","label":"SAS-0007","lengthM":null,"notes":"","a":{"device":"ex-33","port":"sas2"},"b":{"device":"ex-36","port":"sas-b"}},
+    {"id":"cb-91","type":null,"network":"n-sas","label":"SAS-0008","lengthM":null,"notes":"","a":{"device":"ex-33","port":"sas3"},"b":{"device":"ex-37","port":"sas-b"}},
+    {"id":"cb-92","type":null,"network":"n-mgmt","label":"MGT-0026","lengthM":null,"notes":"","a":{"device":"ex-34","port":"mgmt"},"b":{"device":"ex-5","port":"swp3"}},
+    {"id":"cb-93","type":null,"network":"n-mgmt","label":"MGT-0027","lengthM":null,"notes":"","a":{"device":"ex-35","port":"mgmt"},"b":{"device":"ex-5","port":"swp4"}},
+    {"id":"cb-94","type":null,"network":"n-mgmt","label":"MGT-0028","lengthM":null,"notes":"","a":{"device":"ex-36","port":"mgmt"},"b":{"device":"ex-5","port":"swp5"}},
+    {"id":"cb-95","type":null,"network":"n-mgmt","label":"MGT-0029","lengthM":null,"notes":"","a":{"device":"ex-37","port":"mgmt"},"b":{"device":"ex-5","port":"swp6"}},
+    {"id":"cb-96","type":null,"network":"n-bmc","label":"BMC-0026","lengthM":null,"notes":"","a":{"device":"ex-7","port":"swp48"},"b":{"device":"ex-1","port":"swp48"}},
+    {"id":"cb-97","type":null,"network":"n-bmc","label":"BMC-0027","lengthM":null,"notes":"","a":{"device":"ex-8","port":"swp48"},"b":{"device":"ex-5","port":"swp48"}},
+    {"id":"cb-98","type":"lc-om4","network":"n-mgmt","label":"MGT-0030","lengthM":null,"notes":"","a":{"device":"ex-1","port":"swp52"},"b":{"device":"ex-42","port":"swp49"}},
+    {"id":"cb-99","type":"mpo-om4","network":"n-ib","label":"IB-0031","lengthM":null,"notes":"","a":{"device":"ex-2","port":"p21"},"b":{"device":"ex-40","port":"p1"}},
+    {"id":"cb-100","type":"mpo-om4","network":"n-ib","label":"IB-0032","lengthM":null,"notes":"","a":{"device":"ex-2","port":"p22"},"b":{"device":"ex-40","port":"p2"}},
+    {"id":"cb-101","type":"mpo-om4","network":"n-ib","label":"IB-0033","lengthM":null,"notes":"","a":{"device":"ex-2","port":"p23"},"b":{"device":"ex-41","port":"p1"}},
+    {"id":"cb-102","type":"mpo-om4","network":"n-ib","label":"IB-0034","lengthM":null,"notes":"","a":{"device":"ex-2","port":"p24"},"b":{"device":"ex-41","port":"p2"}},
+    {"id":"cb-103","type":"lc-om4","network":"n-mgmt","label":"MGT-0031","lengthM":null,"notes":"","a":{"device":"ex-3","port":"swp52"},"b":{"device":"ex-42","port":"swp50"}},
+    {"id":"cb-104","type":"mpo-om4","network":"n-ib","label":"IB-0035","lengthM":null,"notes":"","a":{"device":"ex-4","port":"p21"},"b":{"device":"ex-40","port":"p3"}},
+    {"id":"cb-105","type":"mpo-om4","network":"n-ib","label":"IB-0036","lengthM":null,"notes":"","a":{"device":"ex-4","port":"p22"},"b":{"device":"ex-40","port":"p4"}},
+    {"id":"cb-106","type":"mpo-om4","network":"n-ib","label":"IB-0037","lengthM":null,"notes":"","a":{"device":"ex-4","port":"p23"},"b":{"device":"ex-41","port":"p3"}},
+    {"id":"cb-107","type":"mpo-om4","network":"n-ib","label":"IB-0038","lengthM":null,"notes":"","a":{"device":"ex-4","port":"p24"},"b":{"device":"ex-41","port":"p4"}},
+    {"id":"cb-108","type":"lc-om4","network":"n-mgmt","label":"MGT-0032","lengthM":null,"notes":"","a":{"device":"ex-5","port":"swp52"},"b":{"device":"ex-42","port":"swp51"}},
+    {"id":"cb-109","type":"mpo-om4","network":"n-ib","label":"IB-0039","lengthM":null,"notes":"","a":{"device":"ex-6","port":"p21"},"b":{"device":"ex-40","port":"p5"}},
+    {"id":"cb-110","type":"mpo-om4","network":"n-ib","label":"IB-0040","lengthM":null,"notes":"","a":{"device":"ex-6","port":"p22"},"b":{"device":"ex-40","port":"p6"}},
+    {"id":"cb-111","type":"mpo-om4","network":"n-ib","label":"IB-0041","lengthM":null,"notes":"","a":{"device":"ex-6","port":"p23"},"b":{"device":"ex-41","port":"p5"}},
+    {"id":"cb-112","type":"mpo-om4","network":"n-ib","label":"IB-0042","lengthM":null,"notes":"","a":{"device":"ex-6","port":"p24"},"b":{"device":"ex-41","port":"p6"}},
+    {"id":"cb-113","type":"dac-osfp-2x","network":"n-ib","label":"IB-0043","lengthM":null,"notes":"","a":{"device":"ex-50","port":"p1"},"b":[{"device":"ex-52","port":"ib0"},{"device":"ex-52","port":"ib1"}]},
+    {"id":"cb-114","type":"dac-osfp-2x","network":"n-ib","label":"IB-0044","lengthM":null,"notes":"","a":{"device":"ex-50","port":"p2"},"b":[{"device":"ex-52","port":"ib2"},{"device":"ex-52","port":"ib3"}]},
+    {"id":"cb-115","type":null,"network":"n-mgmt","label":"MGT-0033","lengthM":null,"notes":"","a":{"device":"ex-52","port":"eth0"},"b":{"device":"ex-42","port":"swp1"}},
+    {"id":"cb-116","type":null,"network":"n-bmc","label":"BMC-0028","lengthM":null,"notes":"","a":{"device":"ex-52","port":"bmc"},"b":{"device":"ex-42","port":"swp13"}},
+    {"id":"cb-117","type":"dac-osfp-2x","network":"n-ib","label":"IB-0045","lengthM":null,"notes":"","a":{"device":"ex-50","port":"p3"},"b":[{"device":"ex-53","port":"ib0"},{"device":"ex-53","port":"ib1"}]},
+    {"id":"cb-118","type":"dac-osfp-2x","network":"n-ib","label":"IB-0046","lengthM":null,"notes":"","a":{"device":"ex-50","port":"p4"},"b":[{"device":"ex-53","port":"ib2"},{"device":"ex-53","port":"ib3"}]},
+    {"id":"cb-119","type":null,"network":"n-mgmt","label":"MGT-0034","lengthM":null,"notes":"","a":{"device":"ex-53","port":"eth0"},"b":{"device":"ex-42","port":"swp2"}},
+    {"id":"cb-120","type":null,"network":"n-bmc","label":"BMC-0029","lengthM":null,"notes":"","a":{"device":"ex-53","port":"bmc"},"b":{"device":"ex-42","port":"swp14"}},
+    {"id":"cb-121","type":"dac-osfp-2x","network":"n-ib","label":"IB-0047","lengthM":null,"notes":"","a":{"device":"ex-50","port":"p5"},"b":[{"device":"ex-54","port":"ib0"},{"device":"ex-54","port":"ib1"}]},
+    {"id":"cb-122","type":"dac-osfp-2x","network":"n-ib","label":"IB-0048","lengthM":null,"notes":"","a":{"device":"ex-50","port":"p6"},"b":[{"device":"ex-54","port":"ib2"},{"device":"ex-54","port":"ib3"}]},
+    {"id":"cb-123","type":null,"network":"n-mgmt","label":"MGT-0035","lengthM":null,"notes":"","a":{"device":"ex-54","port":"eth0"},"b":{"device":"ex-42","port":"swp3"}},
+    {"id":"cb-124","type":null,"network":"n-bmc","label":"BMC-0030","lengthM":null,"notes":"","a":{"device":"ex-54","port":"bmc"},"b":{"device":"ex-42","port":"swp15"}},
+    {"id":"cb-125","type":"dac-osfp-2x","network":"n-ib","label":"IB-0049","lengthM":null,"notes":"","a":{"device":"ex-51","port":"p1"},"b":[{"device":"ex-55","port":"ib0"},{"device":"ex-55","port":"ib1"}]},
+    {"id":"cb-126","type":"dac-osfp-2x","network":"n-ib","label":"IB-0050","lengthM":null,"notes":"","a":{"device":"ex-51","port":"p2"},"b":[{"device":"ex-55","port":"ib2"},{"device":"ex-55","port":"ib3"}]},
+    {"id":"cb-127","type":null,"network":"n-mgmt","label":"MGT-0036","lengthM":null,"notes":"","a":{"device":"ex-55","port":"eth0"},"b":{"device":"ex-42","port":"swp4"}},
+    {"id":"cb-128","type":null,"network":"n-bmc","label":"BMC-0031","lengthM":null,"notes":"","a":{"device":"ex-55","port":"bmc"},"b":{"device":"ex-42","port":"swp16"}},
+    {"id":"cb-129","type":"dac-osfp-2x","network":"n-ib","label":"IB-0051","lengthM":null,"notes":"","a":{"device":"ex-51","port":"p3"},"b":[{"device":"ex-56","port":"ib0"},{"device":"ex-56","port":"ib1"}]},
+    {"id":"cb-130","type":"dac-osfp-2x","network":"n-ib","label":"IB-0052","lengthM":null,"notes":"","a":{"device":"ex-51","port":"p4"},"b":[{"device":"ex-56","port":"ib2"},{"device":"ex-56","port":"ib3"}]},
+    {"id":"cb-131","type":null,"network":"n-mgmt","label":"MGT-0037","lengthM":null,"notes":"","a":{"device":"ex-56","port":"eth0"},"b":{"device":"ex-42","port":"swp5"}},
+    {"id":"cb-132","type":null,"network":"n-bmc","label":"BMC-0032","lengthM":null,"notes":"","a":{"device":"ex-56","port":"bmc"},"b":{"device":"ex-42","port":"swp17"}},
+    {"id":"cb-133","type":"dac-osfp-2x","network":"n-ib","label":"IB-0053","lengthM":null,"notes":"","a":{"device":"ex-51","port":"p5"},"b":[{"device":"ex-57","port":"ib0"},{"device":"ex-57","port":"ib1"}]},
+    {"id":"cb-134","type":"dac-osfp-2x","network":"n-ib","label":"IB-0054","lengthM":null,"notes":"","a":{"device":"ex-51","port":"p6"},"b":[{"device":"ex-57","port":"ib2"},{"device":"ex-57","port":"ib3"}]},
+    {"id":"cb-135","type":null,"network":"n-mgmt","label":"MGT-0038","lengthM":null,"notes":"","a":{"device":"ex-57","port":"eth0"},"b":{"device":"ex-42","port":"swp6"}},
+    {"id":"cb-136","type":null,"network":"n-bmc","label":"BMC-0033","lengthM":null,"notes":"","a":{"device":"ex-57","port":"bmc"},"b":{"device":"ex-42","port":"swp18"}},
+    {"id":"cb-137","type":"dac-osfp-2x","network":"n-ib","label":"IB-0055","lengthM":null,"notes":"","a":{"device":"ex-50","port":"p31"},"b":[{"device":"ex-40","port":"p7"},{"device":"ex-41","port":"p7"}]},
+    {"id":"cb-138","type":"dac-osfp-2x","network":"n-ib","label":"IB-0056","lengthM":null,"notes":"","a":{"device":"ex-50","port":"p32"},"b":[{"device":"ex-40","port":"p8"},{"device":"ex-41","port":"p8"}]},
+    {"id":"cb-139","type":"aoc-osfp-2x","network":"n-ib","label":"IB-0057","lengthM":null,"notes":"","a":{"device":"ex-51","port":"p31"},"b":[{"device":"ex-40","port":"p9"},{"device":"ex-41","port":"p9"}]},
+    {"id":"cb-140","type":"aoc-osfp-2x","network":"n-ib","label":"IB-0058","lengthM":null,"notes":"","a":{"device":"ex-51","port":"p32"},"b":[{"device":"ex-40","port":"p10"},{"device":"ex-41","port":"p10"}]},
+    {"id":"cb-141","type":null,"network":"n-mgmt","label":"MGT-0039","lengthM":null,"notes":"","a":{"device":"ex-60","port":"eth0"},"b":{"device":"ex-59","port":"swp1"}},
+    {"id":"cb-142","type":null,"network":"n-mgmt","label":"MGT-0040","lengthM":null,"notes":"","a":{"device":"ex-61","port":"eth0"},"b":{"device":"ex-59","port":"swp2"}},
+    {"id":"cb-143","type":null,"network":"n-sas","label":"SAS-0009","lengthM":null,"notes":"","a":{"device":"ex-60","port":"sas0"},"b":{"device":"ex-62","port":"sas-a"}},
+    {"id":"cb-144","type":null,"network":"n-sas","label":"SAS-0010","lengthM":null,"notes":"","a":{"device":"ex-60","port":"sas1"},"b":{"device":"ex-63","port":"sas-a"}},
+    {"id":"cb-145","type":null,"network":"n-sas","label":"SAS-0011","lengthM":null,"notes":"","a":{"device":"ex-61","port":"sas0"},"b":{"device":"ex-64","port":"sas-a"}},
+    {"id":"cb-146","type":null,"network":"n-sas","label":"SAS-0012","lengthM":null,"notes":"","a":{"device":"ex-61","port":"sas1"},"b":{"device":"ex-65","port":"sas-a"}},
+    {"id":"cb-147","type":"lc-om4","network":"n-mgmt","label":"MGT-0041","lengthM":30,"notes":"Riser to the ground floor","a":{"device":"ex-59","port":"swp52"},"b":{"device":"ex-42","port":"swp52"}}
   ],
   "meta": {
     "example": true

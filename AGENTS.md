@@ -12,6 +12,26 @@ elevation drawn the way the 2D app draws it (unit grid, device faces per
 slots on the right), with rows hoverable/clickable and hover-synced with the
 3D view.
 
+**Cabling (schema v4):** plans carry networks, cable types, transceivers and
+cables (a cable joins a port of one device to a port of another; `b` is a
+list of legs for breakout cables). The viewer renders every cable run in
+network color: port → out to the rack's cable manager (copper/RJ45 heads
+down the left manager, everything else down the right — the 2D app's
+convention) → up → across the cable **tray** above the row (lanes offset
+per network) → down to the far port. Racks over budget still glow red.
+Hover a cable for a tooltip (label, network, ends, length); click it for a
+full inspector (type, estimated or set length, both ends with links, issues
+from `C.describe`). The selected/hovered cable gets a real 3D thickness
+(a tube highlight); selecting a cable keeps the racks it runs through
+solid. The rack **front view** (inspector elevation) draws the tray with a
+lane per network, the real ports of every device (cabled ones in their
+network's color), and the cable runs — solid for front-side ports, dashed
+where a run comes from the rear, exiting the sheet edge for far ends in
+other racks; runs are hoverable/clickable and hover-synced with the 3D
+view. A “Cables” toolbar button toggles cable visibility. The row view
+shows only the cables that run entirely inside the open row, and only that
+row's tray.
+
 There is also a **rack row view** camera mode: double-click a rack or
 device (or the big “Enter row mode” button, shown while a rack or one of
 its devices is selected and styled like “Leave row mode”) and the view
@@ -72,11 +92,11 @@ stay runnable as **static files with no build step**.
   `vendor/three/build/three.module.js`). No CDN at runtime — everything
   works offline once the submodule is checked out
   (`git submodule update --init`).
-- `js/model.js` and `js/io.js` are **vendored verbatim** from upstream
-  (CC0 1.0). Do not rewrite or "modernize" them; all new behavior goes in
-  our own files (`layout.js`, `app.js`). If a bug is really in them, fix it
-  here and note it (they must keep accepting every plan file, CSV and share
-  link the 2D app produces).
+- `js/model.js`, `js/io.js` and `js/cabling.js` are **vendored verbatim**
+  from upstream (CC0 1.0). Do not rewrite or "modernize" them; all new
+  behavior goes in our own files (`layout.js`, `app.js`). If a bug is really
+  in them, fix it here and note it (they must keep accepting every plan
+  file, CSV and share link the 2D app produces).
 - **HTML5-first UI:** the chrome (header, inspector aside, `<dialog>`,
   `<details>` help/legend, footer) is static HTML/CSS in `index.html`. JS
   only fills dynamic parts (plan name, floor buttons, legend, inspector
@@ -86,7 +106,7 @@ stay runnable as **static files with no build step**.
 - User-entered text (device names, notes, cluster names…) is only ever put
   into the DOM through the `esc()` helper in `app.js`.
 
-## The plan file format (rackplanner schema v3)
+## The plan file format (rackplanner schema v4)
 
 One JSON document. A plan **file** is the document as-is; share links pack
 it into the URL. Floors/rows/racks are nested arrays; everything else is a
@@ -94,20 +114,34 @@ flat list joined by `id` (floors, rows and racks share one id space).
 
 ```
 {
-  "app": "rackplanner", "version": 3,
+  "app": "rackplanner", "version": 4,
   "name": "…", "info": { "site": "…", "author": "…", "revision": "…" },
   "deviceTypes": [ { "id", "label", "tag", "spec", "height": 1..20, "face",
-                     "defaultName", "powerW", "weightKg" } ],
+                     "defaultName", "powerW", "weightKg",
+                     "ports": [ { "name", "first?", "count?", "connector",
+                                   "speedGbps", "side": "front"|"rear" } ],
+                     "slackM" } ],
   "rackTypes":   [ { "id", "name", "units": 10..60, "sideSlots": 0..4,
-                     "powerW": 0=none..budget, "weightKg" } ],
-  "floors": [ { "id", "name", "rows": [ { "id", "name",
-                "racks": [ { "id", "name", "type": rackTypeId } ] } ] } ],
+                     "powerW": 0=none..budget, "weightKg",
+                     "widthMm", "depthMm", "trayM", "slackM" } ],
+  "cableTypes":  [ { "id", "name", "media", "connector", "connectorB",
+                     "legs", "speedGbps", "maxM", "lengthsM": [m] } ],
+  "transceivers": [ { "id", "name", "connector", "fiber": "lc"|"mpo",
+                      "mode": "mmf"|"smf", "speedGbps", "reachM" } ],
+  "floors": [ { "id", "name", "rowPitchM", "rows": [ { "id", "name",
+                "racks": [ { "id", "name", "type": rackTypeId,
+                             "trayM", "slackM" } ] } ] } ],
   "clusters": [ { "id", "name", "color": "#rrggbb" } ],
+  "networks": [ { "id", "name", "color": "#rrggbb", "firstLabel" } ],
   "devices":  [ { "id", "type": deviceTypeId, "name", "cluster": id|null,
                   "notes", "serial", "asset", "ip", "owner",
-                  "powerW": null|W, "weightKg": null|kg,
-                  "height": (reserved space only),
+                  "powerW": null|W, "weightKg": null|kg, "reversed",
+                  "slackM": null|m, "height": (reserved space only),
                   "loc": { "rack": rackId, "kind": "u"|"side", "at": n } } ],
+  "cables": [ { "id", "type": cableTypeId|null, "network": id|null,
+                "label", "lengthM": null|m, "notes",
+                "a": { "device", "port", "transceiver"? },
+                "b": end | [ end|null, … ] } ],
   "meta": { }
 }
 ```
@@ -131,13 +165,27 @@ Rules that matter for rendering:
 - **Rack budgets:** `rackTypes[].powerW` / `weightKg` are the budgets
   (0 = none). A rack is "over budget" when its used total exceeds the
   budget (`statsByRack` computes this as `overPower` / `overWeight`).
+- **Cables:** a cable joins a port of one device (end `a`) to a port of
+  another (end `b` — a single end, or a list of legs for a breakout cable).
+  Every port takes at most one cable end. Port names come from the device
+  **type's** `ports` groups: a group with `first`/`count` is a numbered
+  series (e.g. `swp1…swp48`); `M.expandPorts(type)` flattens a type's ports,
+  `M.legsOf(cable)` the far ends. `null` type / transceiver / length means
+  "work it out" — `js/cabling.js` resolves it; `C.describe(project, cable)`
+  returns the resolved type, length, both ends (device, port, face,
+  transceiver) and the issues the inspector shows, and `C.cableIndex` maps
+  `"deviceId|port"` to the cable on it.
+- **Networks** are colored labels for cable groups; the viewer colors the 3D
+  runs and the elevation runs by `networks[].color` (cables without a
+  network are grey).
 - Optional device fields are omitted when empty; a minimal device is
   `{ id, type, name, cluster, loc }`.
 - `deviceTypes[].face` is a drawing style: `rj45, qsfp, compute, storage,
   jbod, gpu, patch, pdu, ups, blank, generic` (3D uses it for nothing yet —
   color comes from the cluster).
 - Legacy versions: v1 counted units from the **bottom**; v1/v2 had a flat
-  rack list (becomes one row). `IO.normalizeProject` repairs all of it and
+  rack list (becomes one row); v3 has no cabling (networks, cable types and
+  cables come out empty). `IO.normalizeProject` upgrades all of it to v4 and
   reports `warnings`.
 - **CSV inventory** (import/export): columns
   `Floor, Row, Rack, Position, Height (U), Type, Name, Cluster, Serial
@@ -163,8 +211,9 @@ clusters and writes it through `IO.serialize`.
 
 The plan has no physical coordinates, so these are derived (meters):
 
-- 1 U = 44.45 mm. Rack = 0.60 wide × 1.05 deep, plinth 0.06 under the
-  lowest unit, frame 0.06 above the topmost; total height
+- 1 U = 44.45 mm. Rack width/depth come from the rack type's
+  `widthMm`/`depthMm` (default 0.60 × 1.20 m when absent), plinth 0.06
+  under the lowest unit, frame 0.06 above the topmost; total height
   `units × U + 0.12`.
 - Devices: 0.46 wide × 0.55 deep, centered in the rack (a 1 cm gap to the
   side slots); a device at `at` with height `h` has its center at
@@ -177,9 +226,19 @@ The plan has no physical coordinates, so these are derived (meters):
   edge to cabinet edge) with a slot box per slot; empty slots are visible
   in 3D and as dashed boxes in the elevation.
 - Racks in a row stand side by side (0.70 m pitch — a 10 cm gap, `PITCH`),
-  centered on x. Rows are stacked along z with a 1.2 m aisle and
-  **alternating fronts** (hot/cold aisles). Floors are stacked 4.2 m apart
-  with floor slabs.
+  centered on x. Rows are stacked along z with the floor's `rowPitchM`
+  aisle (default `M.DEFAULT_ROW_PITCH_M`, 3 m) and **alternating fronts**
+  (hot/cold aisles). Floors are stacked 4.2 m apart with floor slabs.
+- Cable tray: one above each row, at `row.trayY = max(topY + rackTrayM) +
+  0.02` (the rack's `trayM` is the manager height above its top, from the
+  rack/rack type, `M.rackTrayM`). `L.routes(project, layout)` computes the
+  world-space polyline of every cable run: port → out to the rack's cable
+  manager (copper — an RJ45 head — down the left manager, everything else
+  down the right, as seen from the port's side; side devices always the
+  right one) → up → across the tray (the lane is offset per network,
+  `L.netLaneOffset`) → down to the far port. A same-rack pair on the same
+  lane goes straight down the shared lane, no tray. The layout's `ports`
+  map sends `"deviceId|port"` to a world position.
 - Rack numbering reads **left → right as seen from the row's front**: rows
   facing −z get their x assignment mirrored (`order = n − 1 − k`), so the
   row view, its wheel paging and the rack slider all run left → right for
@@ -194,23 +253,37 @@ index.html            page shell: toolbar, inspector, dialog, help (static)
 css/app.css           dark theme, all UI chrome
 js/model.js           UPSTREAM (CC0), plan model + placement rules + stats
 js/io.js              UPSTREAM (CC0), file/CSV/share-link (de)serialization
-js/layout.js          plan → physical positions (pure, DOM-free, Node-testable)
+js/cabling.js         UPSTREAM (CC0), cabling: ports, cables, networks,
+                      cable-type/transceiver catalogs, length/type/issue
+                      resolution (pure, DOM-free)
+js/layout.js          plan → physical positions + cable routes
+                      (pure, DOM-free, Node-testable)
 js/app.js             the ES module: three.js scene, instanced rendering,
                       orbit + walk + ortho row-view cameras,
-                      raycast hover/click, inspector incl. the SVG rack
-                      elevation (faceSVG / elevationSVG) and the row-view
-                      label overlay (buildRackOverlay / updateOverlay)
+                      raycast hover/click, cable runs (fillCables /
+                      updateCableHighlight), inspector incl. the SVG rack
+                      elevation with tray + cable runs
+                      (faceSVG / elevationSVG) and the row-view label
+                      overlay (buildRackOverlay / updateOverlay)
 vendor/three          Three.js r170, the only runtime dependency (submodule)
 plans/example.json    the built-in example plan, exported as a file
-plans/example-big.json  the “Big example” (2 × 16 racks, 306 devices)
+plans/example-big.json  the “Big example” (2 × 16 racks, 306 devices, no
+                      cables — a v3 plan, upgraded to v4 on load)
 ```
 
 Rendering uses `InstancedMesh` (one per part: rack frames 12 boxes/rack —
 closed cabinet: plinth, 4 posts, 4 rails, back panel, 2 side panels —
 side channel strips, slot boxes per side slot, device bodies, lit face
 strips, side devices, reserved, soft red over-budget glow shells; each
-part has a solid + ghost pair for selection focus) plus canvas-texture
-label planes
+part has a solid + ghost pair for selection focus), cable trays (one box
+per row) and the cable runs — every leg of every cable in **one
+`LineSegments`** with vertex colors per network (`world.cables`; the
+visible subset is the draw range, dimming is written into the colors by
+`fillCables`). The hovered/selected cable additionally gets a real 3D
+thickness: `TubeGeometry` highlights (CatmullRom through the route points)
+rebuilt in `updateCableHighlight`, white undercoat when selected. Cables
+are pickable too — `hit.index / 2` maps back to the cable through
+`world.segCable`. Plus canvas-texture label planes
 (floor labels, per-rack panels and vertical name tags) — fixed in front of
 the cabinet (2–3 cm proud of the front face), rotated once with the rack's
 dir, never billboarded toward the camera; double-sided so they stay faintly
@@ -252,7 +325,7 @@ python3 -m http.server 8080
 # → http://localhost:8080
 
 # syntax-check the plain scripts
-node --check js/model.js js/io.js js/layout.js
+node --check js/model.js js/io.js js/cabling.js js/layout.js
 # app.js is an ES module:
 node --input-type=module --check < js/app.js
 

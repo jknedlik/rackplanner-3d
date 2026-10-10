@@ -9,16 +9,23 @@
  * tests. A project looks like this:
  *
  *   {
- *     version: 3,
+ *     version: 4,
  *     name: 'Untitled rack plan',
  *     info: { site, author, revision },                 // title block
- *     deviceTypes: [{ id, label, tag, spec, height, face, defaultName, powerW, weightKg }],
- *     rackTypes:   [{ id, name, units, sideSlots, powerW, weightKg }],   // budgets, 0 = none
- *     floors: [{ id, name, rows: [{ id, name, racks: [{ id, name, type }] }] }],
+ *     deviceTypes: [{ id, label, tag, spec, height, face, defaultName, powerW, weightKg,
+ *                     ports: [{ name, first?, count?, connector, speedGbps, side }], slackM }],
+ *     rackTypes:   [{ id, name, units, sideSlots, powerW, weightKg,     // budgets, 0 = none
+ *                     widthMm, depthMm, trayM, slackM }],
+ *     cableTypes:  [{ id, name, media, connector, connectorB, legs, speedGbps, maxM, lengthsM: [m] }],
+ *     transceivers: [{ id, name, connector, fiber: 'lc'|'mpo', mode: 'mmf'|'smf', speedGbps, reachM }],
+ *     floors: [{ id, name, rowPitchM, rows: [{ id, name, racks: [{ id, name, type, trayM, slackM }] }] }],
  *     clusters: [{ id, name, color: '#rrggbb' }],
+ *     networks: [{ id, name, color: '#rrggbb', firstLabel }],
  *     devices:  [{ id, type, name, cluster: id|null, notes, serial, asset, ip, owner,
- *                  powerW: null|W, weightKg: null|kg, height (reserved space only),
- *                  loc: { rack, kind: 'u'|'side', at } }],
+ *                  powerW: null|W, weightKg: null|kg, reversed, slackM: null|m,
+ *                  height (reserved space only), loc: { rack, kind: 'u'|'side', at } }],
+ *     cables:   [{ id, type: id|null, network: id|null, label, lengthM: null|m, notes,
+ *                  a: { device, port, transceiver? }, b: end | [end|null, …] }],
  *     meta: {}
  *   }
  *
@@ -33,6 +40,12 @@
  * catalog. The built-in type 'reserved' marks space for future equipment; it
  * has no fixed height (each reservation stores its own) and is not stored in
  * the catalog.
+ *
+ * Cables join a port of one device to a port of another (`b` is a list of
+ * legs for breakout cables). Every port takes one cable end. A `null` type,
+ * transceiver, length, rack tray or slack means "work it out": js/cabling.js
+ * picks and estimates. This file keeps cables consistent when devices,
+ * racks, rows, floors and types change; js/cabling.js holds the rest.
  */
 (function (root, factory) {
   'use strict';
@@ -42,7 +55,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  const SCHEMA_VERSION = 3;
+  const SCHEMA_VERSION = 4;
   const LIMITS = {
     floors: 6,
     rows: 8, // per floor
@@ -53,6 +66,13 @@
     deviceHeight: 20,
     deviceTypes: 60,
     rackTypes: 20,
+    portGroups: 32, // per device type
+    ports: 1024, // per device type
+    cableTypes: 50,
+    transceivers: 50,
+    networks: 30,
+    cables: 20000,
+    legs: 8, // of a breakout cable
   };
   const RACK_UNITS = 47; // height of the default rack type
   const SIDE_SLOTS = 2;
@@ -75,23 +95,60 @@
   ];
   const FACE_IDS = new Set(FACES.map((f) => f.id));
 
+  // Port groups as cleanPortGroup leaves them: a single port has no first/count.
+  const onePort = (name, connector, speedGbps, side) => ({ name, connector, speedGbps, side });
+  const portSeries = (name, first, count, connector, speedGbps, side) => ({ name, first, count, connector, speedGbps, side });
+
   const DEFAULT_DEVICE_TYPES = [
-    { id: 'switch-rj45', label: '48-port switch', tag: 'SWITCH', spec: '48 × RJ45', height: 1, face: 'rj45', defaultName: 'sw-rj45-01', powerW: 150, weightKg: 6 },
-    { id: 'switch-qsfp', label: '24-port switch', tag: 'SWITCH', spec: '24 × QSFP', height: 1, face: 'qsfp', defaultName: 'sw-qsfp-01', powerW: 350, weightKg: 9 },
-    { id: 'compute-node', label: 'Compute node', tag: 'COMPUTE', spec: 'server', height: 2, face: 'compute', defaultName: 'cn-001', powerW: 700, weightKg: 25 },
-    { id: 'storage-node', label: 'Storage node', tag: 'STORAGE', spec: 'server, 24 bays', height: 4, face: 'storage', defaultName: 'sn-01', powerW: 900, weightKg: 40 },
-    { id: 'storage-enclosure', label: 'Storage enclosure', tag: 'JBOD', spec: 'JBOD, 2 drawers', height: 4, face: 'jbod', defaultName: 'jbod-01', powerW: 800, weightKg: 60 },
+    {
+      id: 'switch-rj45', label: '48-port switch', tag: 'SWITCH', spec: '48 × RJ45', height: 1, face: 'rj45', defaultName: 'sw-rj45-01', powerW: 150, weightKg: 6,
+      ports: [portSeries('swp', 1, 48, 'rj45', 1, 'front'), portSeries('swp', 49, 4, 'sfp+', 10, 'front')],
+      slackM: 0,
+    },
+    {
+      id: 'switch-qsfp', label: '24-port switch', tag: 'SWITCH', spec: '24 × QSFP', height: 1, face: 'qsfp', defaultName: 'sw-qsfp-01', powerW: 350, weightKg: 9,
+      ports: [portSeries('p', 1, 24, 'qsfp56', 200, 'front')],
+      slackM: 0,
+    },
+    {
+      id: 'compute-node', label: 'Compute node', tag: 'COMPUTE', spec: 'server', height: 2, face: 'compute', defaultName: 'cn-001', powerW: 700, weightKg: 25,
+      ports: [onePort('bmc', 'rj45', 1, 'rear'), onePort('eth0', 'rj45', 1, 'rear'), onePort('ib0', 'qsfp56', 200, 'rear')],
+      slackM: 0.3,
+    },
+    {
+      id: 'storage-node', label: 'Storage node', tag: 'STORAGE', spec: 'server, 24 bays', height: 4, face: 'storage', defaultName: 'sn-01', powerW: 900, weightKg: 40,
+      ports: [
+        onePort('bmc', 'rj45', 1, 'rear'),
+        onePort('eth0', 'rj45', 1, 'rear'),
+        onePort('eth1', 'sfp28', 25, 'rear'),
+        portSeries('ib', 0, 2, 'qsfp56', 200, 'rear'),
+        portSeries('sas', 0, 4, 'sas-hd', 12, 'rear'),
+      ],
+      slackM: 0.3,
+    },
+    {
+      id: 'storage-enclosure', label: 'Storage enclosure', tag: 'JBOD', spec: 'JBOD, 2 drawers', height: 4, face: 'jbod', defaultName: 'jbod-01', powerW: 800, weightKg: 60,
+      ports: [onePort('mgmt', 'rj45', 1, 'rear'), onePort('sas-a', 'sas-hd', 12, 'rear'), onePort('sas-b', 'sas-hd', 12, 'rear')],
+      slackM: 0.3,
+    },
+  ];
+
+  const GPU_SERVER_PORTS = [
+    onePort('bmc', 'rj45', 1, 'rear'),
+    onePort('eth0', 'rj45', 1, 'rear'),
+    portSeries('eth', 1, 2, 'sfp28', 25, 'rear'),
+    portSeries('ib', 0, 4, 'qsfp56', 200, 'rear'),
   ];
 
   /** Starting points for new device types in the catalog editor. */
   const TYPE_TEMPLATES = [
-    { label: '1U server', tag: 'SERVER', spec: '10 bays', height: 1, face: 'compute', defaultName: 'srv-01', powerW: 450, weightKg: 16 },
-    { label: 'GPU server', tag: 'GPU', spec: '8 × GPU', height: 4, face: 'gpu', defaultName: 'gpu-01', powerW: 3000, weightKg: 65 },
-    { label: 'Patch panel', tag: 'PATCH', spec: '24 × RJ45', height: 1, face: 'patch', defaultName: 'pp-01', powerW: 0, weightKg: 2 },
-    { label: 'PDU', tag: 'PDU', spec: '12 × C13', height: 1, face: 'pdu', defaultName: 'pdu-01', powerW: 0, weightKg: 5 },
-    { label: 'UPS', tag: 'UPS', spec: '3 kVA', height: 2, face: 'ups', defaultName: 'ups-01', powerW: 150, weightKg: 32 },
-    { label: 'Blanking panel', tag: 'BLANK', spec: 'airflow', height: 1, face: 'blank', defaultName: 'blank-01', powerW: 0, weightKg: 0.5 },
-    { label: 'Generic device', tag: 'DEVICE', spec: '', height: 2, face: 'generic', defaultName: 'dev-01', powerW: 300, weightKg: 15 },
+    { label: '1U server', tag: 'SERVER', spec: '10 bays', height: 1, face: 'compute', defaultName: 'srv-01', powerW: 450, weightKg: 16, ports: [onePort('bmc', 'rj45', 1, 'rear'), portSeries('eth', 0, 2, 'rj45', 1, 'rear')], slackM: 0.3 },
+    { label: 'GPU server', tag: 'GPU', spec: '8 × GPU', height: 4, face: 'gpu', defaultName: 'gpu-01', powerW: 3000, weightKg: 65, ports: GPU_SERVER_PORTS, slackM: 0.3 },
+    { label: 'Patch panel', tag: 'PATCH', spec: '24 × RJ45', height: 1, face: 'patch', defaultName: 'pp-01', powerW: 0, weightKg: 2, ports: [], slackM: 0 },
+    { label: 'PDU', tag: 'PDU', spec: '12 × C13', height: 1, face: 'pdu', defaultName: 'pdu-01', powerW: 0, weightKg: 5, ports: [onePort('mgmt', 'rj45', 1, 'rear')], slackM: 0 },
+    { label: 'UPS', tag: 'UPS', spec: '3 kVA', height: 2, face: 'ups', defaultName: 'ups-01', powerW: 150, weightKg: 32, ports: [onePort('mgmt', 'rj45', 1, 'rear')], slackM: 0 },
+    { label: 'Blanking panel', tag: 'BLANK', spec: 'airflow', height: 1, face: 'blank', defaultName: 'blank-01', powerW: 0, weightKg: 0.5, ports: [], slackM: 0 },
+    { label: 'Generic device', tag: 'DEVICE', spec: '', height: 2, face: 'generic', defaultName: 'dev-01', powerW: 300, weightKg: 15, ports: [], slackM: 0 },
   ];
 
   const RESERVED = Object.freeze({
@@ -104,14 +161,16 @@
     defaultName: 'reserved-01',
     powerW: 0,
     weightKg: 0,
+    ports: Object.freeze([]),
+    slackM: 0,
     variable: true,
     builtin: true,
   });
 
   const DEFAULT_RACK_TYPES = [
-    { id: 'rack-47', name: '47U rack', units: 47, sideSlots: 2, powerW: 12000, weightKg: 1200 },
-    { id: 'rack-42', name: '42U rack', units: 42, sideSlots: 2, powerW: 8000, weightKg: 1000 },
-    { id: 'rack-48', name: '48U high-density rack', units: 48, sideSlots: 2, powerW: 20000, weightKg: 1500 },
+    { id: 'rack-47', name: '47U rack', units: 47, sideSlots: 2, powerW: 12000, weightKg: 1200, widthMm: 600, depthMm: 1200, trayM: 0.5, slackM: 0.25 },
+    { id: 'rack-42', name: '42U rack', units: 42, sideSlots: 2, powerW: 8000, weightKg: 1000, widthMm: 600, depthMm: 1200, trayM: 0.5, slackM: 0.25 },
+    { id: 'rack-48', name: '48U high-density rack', units: 48, sideSlots: 2, powerW: 20000, weightKg: 1500, widthMm: 800, depthMm: 1200, trayM: 0.5, slackM: 0.25 },
   ];
   const FALLBACK_RACK_TYPE = DEFAULT_RACK_TYPES[0];
 
@@ -139,6 +198,68 @@
     '#9a6b3f', // brown
   ];
 
+  /**
+   * Port and plug connectors. A plug fits a port whose `accepts` lists the
+   * plug's family; cages take direct cables and transceivers of their family.
+   */
+  const CONNECTORS = [
+    { id: 'rj45', label: 'RJ45', family: 'rj45', speedGbps: 1, cage: false },
+    { id: 'sfp', label: 'SFP', family: 'sfp', speedGbps: 1, cage: true },
+    { id: 'sfp+', label: 'SFP+', family: 'sfp', speedGbps: 10, cage: true },
+    { id: 'sfp28', label: 'SFP28', family: 'sfp', speedGbps: 25, cage: true },
+    { id: 'sfp56', label: 'SFP56', family: 'sfp', speedGbps: 50, cage: true },
+    { id: 'qsfp+', label: 'QSFP+', family: 'qsfp', speedGbps: 40, cage: true },
+    { id: 'qsfp28', label: 'QSFP28', family: 'qsfp', speedGbps: 100, cage: true },
+    { id: 'qsfp56', label: 'QSFP56', family: 'qsfp', speedGbps: 200, cage: true },
+    { id: 'qsfp112', label: 'QSFP112', family: 'qsfp', speedGbps: 400, cage: true },
+    { id: 'qsfp-dd', label: 'QSFP-DD', family: 'qsfpdd', speedGbps: 400, cage: true, accepts: ['qsfp', 'qsfpdd'] },
+    { id: 'osfp', label: 'OSFP', family: 'osfp', speedGbps: 800, cage: true },
+    { id: 'lc', label: 'LC duplex', family: 'lc', speedGbps: 0, cage: false },
+    { id: 'mpo', label: 'MPO', family: 'mpo', speedGbps: 0, cage: false },
+    { id: 'sas-hd', label: 'Mini-SAS HD', family: 'sas', speedGbps: 12, cage: false },
+  ].map((c) => Object.assign(c, { accepts: c.accepts || [c.family] }));
+  const CONNECTOR_MAP = new Map(CONNECTORS.map((c) => [c.id, c]));
+
+  /** Cable media: copper patch cords, direct cables (plugs on the cable) and fiber (needs optics at cages). */
+  // Without a prototype, so that a name like "constructor" from a file is no media.
+  const MEDIA = Object.assign(Object.create(null), {
+    cat6: { label: 'Cat6 copper', short: 'Cat6', kind: 'copper', plug: 'rj45' },
+    cat6a: { label: 'Cat6a copper', short: 'Cat6a', kind: 'copper', plug: 'rj45' },
+    cat8: { label: 'Cat8 copper', short: 'Cat8', kind: 'copper', plug: 'rj45' },
+    dac: { label: 'Direct attach copper', short: 'DAC', kind: 'direct', plug: 'qsfp56' },
+    aoc: { label: 'Active optical cable', short: 'AOC', kind: 'direct', plug: 'qsfp56' },
+    sas: { label: 'SAS cable', short: 'SAS', kind: 'direct', plug: 'sas-hd' },
+    om3: { label: 'Multimode fiber OM3', short: 'OM3', kind: 'fiber', mode: 'mmf', plug: 'lc' },
+    om4: { label: 'Multimode fiber OM4', short: 'OM4', kind: 'fiber', mode: 'mmf', plug: 'lc' },
+    om5: { label: 'Multimode fiber OM5', short: 'OM5', kind: 'fiber', mode: 'mmf', plug: 'lc' },
+    os2: { label: 'Single-mode fiber OS2', short: 'OS2', kind: 'fiber', mode: 'smf', plug: 'lc' },
+  });
+
+  const cableType = (id, name, media, connector, connectorB, legs, speedGbps, maxM, lengthsM) => ({ id, name, media, connector, connectorB, legs, speedGbps, maxM, lengthsM });
+  const DEFAULT_CABLE_TYPES = [
+    cableType('cat6a', 'Cat6a patch cord', 'cat6a', 'rj45', 'rj45', 1, 10, 100, [0.5, 1, 1.5, 2, 3, 5, 7, 10, 15, 20]),
+    cableType('dac-sfp28', 'SFP28 DAC', 'dac', 'sfp28', 'sfp28', 1, 25, 5, [0.5, 1, 1.5, 2, 3, 5]),
+    cableType('dac-qsfp56', 'QSFP56 DAC', 'dac', 'qsfp56', 'qsfp56', 1, 200, 3, [0.5, 1, 1.5, 2, 2.5, 3]),
+    cableType('aoc-qsfp56', 'QSFP56 AOC', 'aoc', 'qsfp56', 'qsfp56', 1, 200, 100, [3, 5, 7, 10, 15, 20, 30]),
+    cableType('dac-osfp-2x', 'OSFP to 2 × QSFP56 DAC', 'dac', 'osfp', 'qsfp56', 2, 400, 3, [1, 1.5, 2, 2.5, 3]),
+    cableType('aoc-osfp-2x', 'OSFP to 2 × QSFP56 AOC', 'aoc', 'osfp', 'qsfp56', 2, 400, 50, [3, 5, 7, 10, 15, 20]),
+    cableType('lc-om4', 'LC duplex OM4', 'om4', 'lc', 'lc', 1, 0, 0, [1, 2, 3, 5, 7, 10, 15, 20, 30]),
+    cableType('mpo-om4', 'MPO-12 OM4', 'om4', 'mpo', 'mpo', 1, 0, 0, []),
+    cableType('sas-hd', 'Mini-SAS HD cable', 'sas', 'sas-hd', 'sas-hd', 1, 12, 6, [0.5, 1, 2, 3, 4]),
+  ];
+
+  const transceiver = (id, name, connector, fiber, mode, speedGbps, reachM) => ({ id, name, connector, fiber, mode, speedGbps, reachM });
+  const DEFAULT_TRANSCEIVERS = [
+    transceiver('sfp-10g-sr', 'SFP+ 10G SR', 'sfp+', 'lc', 'mmf', 10, 300),
+    transceiver('sfp28-25g-sr', 'SFP28 25G SR', 'sfp28', 'lc', 'mmf', 25, 100),
+    transceiver('qsfp28-100g-sr4', 'QSFP28 100G SR4', 'qsfp28', 'mpo', 'mmf', 100, 100),
+    transceiver('qsfp28-100g-lr4', 'QSFP28 100G LR4', 'qsfp28', 'lc', 'smf', 100, 10000),
+    transceiver('qsfp56-200g-sr4', 'QSFP56 200G SR4', 'qsfp56', 'mpo', 'mmf', 200, 100),
+    transceiver('osfp-400g-sr4', 'OSFP 400G SR4', 'osfp', 'mpo', 'mmf', 400, 50),
+  ];
+
+  const DEFAULT_ROW_PITCH_M = 3;
+
   // ---------------------------------------------------------------- helpers
 
   const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -147,7 +268,22 @@
   const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
   /** "1 rack", "3 racks"; `many` for irregular plurals. */
   const plural = (n, word, many) => `${n} ${n === 1 ? word : many || word + 's'}`;
+  /**
+   * The plural of a name such as a device type's label, to use inside a
+   * sentence: "48-port switch" → "48-port switches", "Compute node" →
+   * "compute nodes", "PDU" → "PDUs", "GPU server" → "GPU servers".
+   */
+  function pluralName(name) {
+    const s = String(name).trim();
+    // A capital that only starts the sentence goes; acronyms (PDU, GPU) and units (1U) keep theirs.
+    const text = /^[A-Z][a-z]/.test(s) ? s[0].toLowerCase() + s.slice(1) : s;
+    if (/(s|x|z|ch|sh)$/i.test(text)) return text + (/[A-Z]$/.test(text) ? 's' : 'es');
+    if (/[^aeiou]y$/i.test(text)) return text.slice(0, -1) + 'ies';
+    return text + 's';
+  }
   const namesOf = (list) => new Set(list.map((x) => x.name));
+  const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+  const orNull = (v) => (v === undefined ? null : v);
 
   /** Lowercase ASCII words joined by dashes, for file names and ids: "Halle Süd 2" → halle-sud-2. */
   function slug(s, max) {
@@ -325,6 +461,161 @@
     const t = typeOf(project, d.type);
     return t ? t.weightKg : 0;
   }
+  /** Height from a rack's top unit up to the cable tray, in metres (the rack's own, else its type's). */
+  function rackTrayM(project, rack) {
+    const r = asRack(project, rack);
+    return r && r.trayM !== null && r.trayM !== undefined ? r.trayM : rackTypeOf(project, r).trayM;
+  }
+  /** Slack a cable gets in a rack, at each end that is in it. */
+  function rackSlackM(project, rack) {
+    const r = asRack(project, rack);
+    return r && r.slackM !== null && r.slackM !== undefined ? r.slackM : rackTypeOf(project, r).slackM;
+  }
+  /** Slack a cable gets at a device: the device's own, else its type's. */
+  function deviceSlackM(project, d) {
+    if (d.slackM !== null && d.slackM !== undefined) return d.slackM;
+    const t = typeOf(project, d.type);
+    return (t && t.slackM) || 0;
+  }
+  function cableTypeById(project, id) {
+    return (id && (project.cableTypes || []).find((t) => t.id === id)) || null;
+  }
+  function transceiverById(project, id) {
+    return (id && (project.transceivers || []).find((t) => t.id === id)) || null;
+  }
+  function networkById(project, id) {
+    return (id && (project.networks || []).find((n) => n.id === id)) || null;
+  }
+
+  // ------------------------------------------------------------------ ports
+
+  function connectorById(id) {
+    return CONNECTOR_MAP.get(id) || null;
+  }
+  /** True when a plug of connector `plugId` fits a port of connector `portId` (same family, or a QSFP plug in a QSFP-DD cage). */
+  function plugFits(plugId, portId) {
+    const plug = connectorById(plugId);
+    const port = connectorById(portId);
+    return !!plug && !!port && port.accepts.includes(plug.family);
+  }
+
+  // Port names end up in keys like "device|port" and in patterns like swp[1-48].
+  const portName = (v) => (typeof v === 'string' || typeof v === 'number' ? String(v).replace(/[|[\]\u0000-\u001f]/g, '').trim().slice(0, 32) : '');
+  const given = (v) => v !== undefined && v !== null && v !== '';
+
+  /**
+   * A valid port group from untrusted input, or null. A group with `first`
+   * or `count` is a numbered series (swp1 … swp48); without both it is one
+   * port named `name`.
+   */
+  function cleanPortGroup(raw) {
+    if (!isObj(raw)) return null;
+    const conn = connectorById(raw.connector);
+    const name = portName(raw.name);
+    const series = given(raw.first) || given(raw.count);
+    if (!conn || (!series && !name)) return null;
+    const g = { name };
+    if (series) {
+      g.first = clampInt(raw.first, 0, 9999, 1);
+      g.count = clampInt(raw.count, 1, LIMITS.ports, 1);
+    }
+    g.connector = conn.id;
+    g.speedGbps = clampNum(raw.speedGbps, 0, 1600, conn.speedGbps);
+    g.side = raw.side === 'front' ? 'front' : 'rear';
+    return g;
+  }
+
+  /** Names of the ports of a group: bmc; swp1 … swp48; 1 … 24. */
+  function groupNames(g) {
+    if (!given(g.first) && !given(g.count)) return [g.name];
+    const first = given(g.first) ? g.first : 1;
+    return Array.from({ length: given(g.count) ? g.count : 1 }, (_, i) => `${g.name}${first + i}`);
+  }
+
+  /** Valid port groups: groups that repeat a name or go past 32 groups or 1024 ports are dropped. */
+  function cleanPorts(list) {
+    const out = [];
+    const names = new Set();
+    let total = 0;
+    for (const raw of Array.isArray(list) ? list : []) {
+      if (out.length >= LIMITS.portGroups) break;
+      const g = cleanPortGroup(raw);
+      if (!g) continue;
+      const own = groupNames(g);
+      if (total + own.length > LIMITS.ports || own.some((n) => names.has(n))) continue;
+      own.forEach((n) => names.add(n));
+      total += own.length;
+      out.push(g);
+    }
+    return out;
+  }
+
+  /**
+   * Why the port groups `list` cannot be a device type's ports as given, or
+   * null: a group without a connector or name, a port named twice, or more
+   * than 32 groups or 1024 ports (cleanPorts would drop those silently).
+   */
+  function portsProblem(list) {
+    const groups = Array.isArray(list) ? list : [];
+    if (groups.length > LIMITS.portGroups) return `A device type has at most ${LIMITS.portGroups} port groups`;
+    const names = new Set();
+    let total = 0;
+    for (const raw of groups) {
+      const g = cleanPortGroup(raw);
+      if (!g) return 'A port group needs a name, like bmc, or a range, like swp[1-48], and a connector';
+      const own = groupNames(g);
+      total += own.length;
+      if (total > LIMITS.ports) return `A device type has at most ${LIMITS.ports} ports`;
+      for (const n of own) {
+        if (names.has(n)) return `Port ${n} is named twice`;
+        names.add(n);
+      }
+    }
+    return null;
+  }
+
+  /** Every port of a device type in catalog order: [{ name, group, index, connector, speedGbps, side }]. */
+  function expandPorts(type) {
+    const out = [];
+    ((type && type.ports) || []).forEach((g, group) =>
+      groupNames(g).forEach((name, index) => out.push({ name, group, index, connector: g.connector, speedGbps: g.speedGbps, side: g.side }))
+    );
+    return out;
+  }
+
+  /** A group written as a pattern: swp[1-48], Ethernet1/[1-32], [1-24] or bmc. */
+  function portPattern(g) {
+    if (!given(g.first) && !given(g.count)) return g.name;
+    const first = given(g.first) ? g.first : 1;
+    const count = given(g.count) ? g.count : 1;
+    return count === 1 ? `${g.name}[${first}]` : `${g.name}[${first}-${first + count - 1}]`;
+  }
+
+  /** Reads a pattern like portPattern writes: { name, first, count }, { name } for one port, or null. */
+  function parsePortPattern(text) {
+    return portPatternProblem(text) ? null : readPortPattern(text);
+  }
+  const PORT_RANGE = /^(.*?)\[\s*(\d+)\s*(?:[-–]\s*(\d+)\s*)?\]$/;
+  function readPortPattern(text) {
+    const t = String(text == null ? '' : text).trim();
+    const m = PORT_RANGE.exec(t);
+    if (!m) return { name: t };
+    const first = parseInt(m[2], 10);
+    const last = m[3] === undefined ? first : parseInt(m[3], 10);
+    return { name: m[1].trim(), first, count: last - first + 1 };
+  }
+  /** Why `text` is no pattern parsePortPattern reads (a sentence), or null when it is one. */
+  function portPatternProblem(text) {
+    const t = String(text == null ? '' : text).trim();
+    if (!t) return 'A port group needs a name, like bmc, or a range, like swp[1-48]';
+    const g = readPortPattern(t);
+    if (portName(g.name) !== g.name) return `“${t}” isn’t a port name or a range like swp[1-48]`;
+    if (g.count === undefined) return null;
+    if (g.count < 1) return `“${t}” counts down: put the lower number first, like swp[1-48]`;
+    if (g.first > 9999) return 'Port numbers go up to 9999';
+    if (g.count > LIMITS.ports) return `A device type has at most ${LIMITS.ports} ports`;
+    return null;
+  }
 
   // --------------------------------------------------------------- catalogs
 
@@ -342,6 +633,8 @@
       defaultName: str(r.defaultName, 80) || `${slug(label, 20) || 'dev'}-01`,
       powerW: clampNum(r.powerW, 0, 100000, 0),
       weightKg: clampNum(r.weightKg, 0, 5000, 0),
+      ports: cleanPorts(r.ports),
+      slackM: clampNum(r.slackM, 0, 10, 0),
     };
   }
 
@@ -356,6 +649,98 @@
       sideSlots: clampInt(r.sideSlots, 0, maxSideSlots(units), Math.min(SIDE_SLOTS, maxSideSlots(units))),
       powerW: clampNum(r.powerW, 0, 1000000, 0),
       weightKg: clampNum(r.weightKg, 0, 100000, 0),
+      widthMm: clampInt(r.widthMm, 300, 1200, 600),
+      depthMm: clampInt(r.depthMm, 600, 1600, 1200),
+      trayM: clampNum(r.trayM, 0, 10, 0.5),
+      slackM: clampNum(r.slackM, 0, 10, 0.25),
+    };
+  }
+
+  /** Connectors a cable of `media` can have as plugs. */
+  function mediaConnectors(media) {
+    const m = MEDIA[media];
+    if (!m) return [];
+    if (m.kind === 'copper') return CONNECTORS.filter((c) => c.family === 'rj45').map((c) => c.id);
+    if (m.kind === 'fiber') return ['lc', 'mpo'];
+    if (media === 'sas') return ['sas-hd'];
+    return CONNECTORS.filter((c) => c.cage).map((c) => c.id);
+  }
+
+  function guessMedia(connector) {
+    const c = connectorById(connector);
+    if (!c) return 'cat6a';
+    if (c.cage) return 'dac';
+    return { lc: 'om4', mpo: 'om4', sas: 'sas' }[c.family] || 'cat6a';
+  }
+
+  /**
+   * A catalog name from untrusted input: cable schedules mark picked types
+   * and transceivers with "(auto)", so a name doesn't end in it.
+   */
+  const catalogName = (v) => str(v, 60).replace(/(\s*\(auto\))+$/i, '').trim();
+
+  /** A valid cable type from untrusted input (the id is left to the caller). Plugs that don't suit the media fall back to its usual one. */
+  function cleanCableType(raw) {
+    const r = isObj(raw) ? raw : {};
+    const media = MEDIA[r.media] ? r.media : guessMedia(r.connector);
+    const allowed = mediaConnectors(media);
+    const connector = allowed.includes(r.connector) ? r.connector : MEDIA[media].plug;
+    const connectorB = allowed.includes(r.connectorB) ? r.connectorB : connector;
+    const legs = clampInt(r.legs, 1, LIMITS.legs, 1);
+    const plugs = legs > 1 ? `${connectorById(connector).label} to ${legs} × ${connectorById(connectorB).label}` : connectorById(connector).label;
+    const lengths = (Array.isArray(r.lengthsM) ? r.lengthsM : []).map((v) => clampNum(v, 0.1, 10000, null)).filter((v) => v !== null);
+    return {
+      id: str(String(r.id == null ? '' : r.id), 40),
+      name: catalogName(r.name) || `${plugs} ${MEDIA[media].short}`,
+      media,
+      connector,
+      connectorB,
+      legs,
+      speedGbps: clampNum(r.speedGbps, 0, 1600, 0),
+      maxM: clampNum(r.maxM, 0, 100000, 0),
+      lengthsM: [...new Set(lengths)].sort((a, b) => a - b).slice(0, 40),
+    };
+  }
+
+  /** A valid transceiver from untrusted input (the id is left to the caller). */
+  function cleanTransceiver(raw) {
+    const r = isObj(raw) ? raw : {};
+    const conn = connectorById(r.connector);
+    const connector = conn && conn.cage ? conn.id : 'qsfp56';
+    const fiber = r.fiber === 'mpo' ? 'mpo' : 'lc';
+    const mode = r.mode === 'smf' ? 'smf' : 'mmf';
+    const speedGbps = clampNum(r.speedGbps, 0, 1600, connectorById(connector).speedGbps);
+    return {
+      id: str(String(r.id == null ? '' : r.id), 40),
+      name: catalogName(r.name) || `${connectorById(connector).label} ${speedGbps}G ${mode === 'smf' ? 'LR' : 'SR'}`,
+      connector,
+      fiber,
+      mode,
+      speedGbps,
+      reachM: clampNum(r.reachM, 0, 100000, 100),
+    };
+  }
+
+  /** First label of a network's series: up to three letters of its name, INF-0001 for InfiniBand. */
+  function defaultFirstLabel(name) {
+    const code = slug(name, 60).replace(/-/g, '').slice(0, 3).toUpperCase();
+    return `${code || 'C'}-0001`;
+  }
+
+  function nextNetworkColor(project) {
+    const used = new Set((project.networks || []).map((n) => n.color));
+    return CLUSTER_COLORS.find((c) => !used.has(c)) || CLUSTER_COLORS[(project.networks || []).length % CLUSTER_COLORS.length];
+  }
+
+  /** A valid network from untrusted input (the id is left to the caller); `project` picks a free color when it has none. */
+  function cleanNetwork(raw, project) {
+    const r = isObj(raw) ? raw : {};
+    const name = str(r.name, 60) || 'Network';
+    return {
+      id: str(String(r.id == null ? '' : r.id), 80),
+      name,
+      color: normalizeHex(r.color) || (project ? nextNetworkColor(project) : CLUSTER_COLORS[0]),
+      firstLabel: str(r.firstLabel, 40) || defaultFirstLabel(name),
     };
   }
 
@@ -381,7 +766,8 @@
 
   /**
    * Changes a device type. Returns an error message and leaves the plan
-   * unchanged when placed devices would no longer fit.
+   * unchanged when placed devices would no longer fit. When its ports
+   * change, cables keep their place in each port group (see remapPorts).
    */
   function updateDeviceType(project, id, changes) {
     const i = project.deviceTypes.findIndex((t) => t.id === id);
@@ -398,13 +784,15 @@
         return `${next.height}U does not fit: ${problem}`;
       }
     }
+    if (JSON.stringify(next.ports) !== JSON.stringify(before.ports || [])) remapPorts(project, id, before.ports || []);
     return null;
   }
 
-  /** Removes a device type together with its devices. */
+  /** Removes a device type together with its devices and their cables. */
   function deleteDeviceType(project, id) {
     project.deviceTypes = project.deviceTypes.filter((t) => t.id !== id);
     project.devices = project.devices.filter((d) => d.type !== id);
+    pruneCables(project);
   }
 
   /**
@@ -520,9 +908,13 @@
         info: { site: '', author: '', revision: '' },
         deviceTypes: clone(DEFAULT_DEVICE_TYPES),
         rackTypes: clone(DEFAULT_RACK_TYPES),
+        cableTypes: clone(DEFAULT_CABLE_TYPES),
+        transceivers: clone(DEFAULT_TRANSCEIVERS),
         floors: [],
         clusters: [],
+        networks: [],
         devices: [],
+        cables: [],
         meta: {},
       },
       props
@@ -540,11 +932,13 @@
     return p;
   }
 
-  /** Same floors, rows, racks and catalog as `project`, without devices or clusters. */
+  /** Same floors, rows, racks and catalogs as `project`, without devices, clusters, cables or networks. */
   function copyLayout(project) {
     const p = clone(project);
     p.devices = [];
     p.clusters = [];
+    p.cables = [];
+    p.networks = [];
     p.meta = {};
     p.name = `${project.name} (layout)`;
     return p;
@@ -556,7 +950,7 @@
    */
   function insertFloor(project, name, index) {
     if (project.floors.length >= LIMITS.floors) return null;
-    const floor = { id: nextId('f', structureIds(project)), name: str(name, 60) || nextFloorName(project), rows: [] };
+    const floor = { id: nextId('f', structureIds(project)), name: str(name, 60) || nextFloorName(project), rowPitchM: DEFAULT_ROW_PITCH_M, rows: [] };
     project.floors.splice(index == null ? project.floors.length : index, 0, floor);
     return floor;
   }
@@ -603,14 +997,15 @@
       (o.type && rackTypeById(project, o.type) && o.type) ||
       (neighbour && rackTypeById(project, neighbour.type) && neighbour.type) ||
       project.rackTypes[0].id;
-    const rack = { id: nextId('r', structureIds(project)), name: str(o.name, 60) || nextRackName(project, rowId), type };
+    const rack = { id: nextId('r', structureIds(project)), name: str(o.name, 60) || nextRackName(project, rowId), type, trayM: null, slackM: null };
     row.racks.splice(index, 0, rack);
     return rack;
   }
 
-  /** Removes the devices standing in the racks of `rackIds` (a Set). */
+  /** Removes the devices standing in the racks of `rackIds` (a Set), and their cables. */
   function removeDevicesIn(project, rackIds) {
     project.devices = project.devices.filter((d) => !rackIds.has(d.loc.rack));
+    pruneCables(project);
   }
 
   /** Removes a rack and its devices. A row keeps at least one rack. */
@@ -706,16 +1101,22 @@
     p.name = 'Hall 2 expansion';
     p.info = { site: 'Hall 2', author: 'Rackplanner', revision: 'A' };
     p.meta.example = true;
+    p.deviceTypes.splice(2, 0, {
+      id: 'switch-osfp', label: '32-port 400G switch', tag: 'SWITCH', spec: '32 × OSFP', height: 1, face: 'qsfp', defaultName: 'sw-osfp-01', powerW: 900, weightKg: 13,
+      ports: [portSeries('p', 1, 32, 'osfp', 400, 'front')],
+      slackM: 0,
+    });
     p.deviceTypes.push(
-      { id: 'gpu-server', label: 'GPU server', tag: 'GPU', spec: '8 × GPU', height: 4, face: 'gpu', defaultName: 'gpu-srv-01', powerW: 3000, weightKg: 65 },
-      { id: 'patch-panel', label: 'Patch panel', tag: 'PATCH', spec: '24 × RJ45', height: 1, face: 'patch', defaultName: 'pp-01', powerW: 0, weightKg: 2 },
-      { id: 'pdu', label: 'PDU', tag: 'PDU', spec: '12 × C13', height: 1, face: 'pdu', defaultName: 'pdu-01', powerW: 0, weightKg: 5 }
+      { id: 'gpu-server', label: 'GPU server', tag: 'GPU', spec: '8 × GPU', height: 4, face: 'gpu', defaultName: 'gpu-srv-01', powerW: 3000, weightKg: 65, ports: clone(GPU_SERVER_PORTS), slackM: 0.3 },
+      { id: 'patch-panel', label: 'Patch panel', tag: 'PATCH', spec: '24 × RJ45', height: 1, face: 'patch', defaultName: 'pp-01', powerW: 0, weightKg: 2, ports: [], slackM: 0 },
+      { id: 'pdu', label: 'PDU', tag: 'PDU', spec: '12 × C13', height: 1, face: 'pdu', defaultName: 'pdu-01', powerW: 0, weightKg: 5, ports: [onePort('mgmt', 'rj45', 1, 'rear')], slackM: 0 }
     );
-    const rack = (id, name, type) => ({ id, name, type: type || 'rack-47' });
+    const rack = (id, name, type) => ({ id, name, type: type || 'rack-47', trayM: null, slackM: null });
     p.floors = [
       {
         id: 'f1',
         name: 'Ground floor',
+        rowPitchM: 3,
         rows: [
           { id: 'row1', name: 'Row A', racks: [rack('r1', 'Rack A01'), rack('r2', 'Rack A02'), rack('r3', 'Rack A03')] },
           { id: 'row2', name: 'Row B', racks: [rack('r4', 'Rack B01', 'rack-48'), rack('r5', 'Rack B02', 'rack-48'), rack('r6', 'Rack B03', 'rack-48')] },
@@ -724,6 +1125,7 @@
       {
         id: 'f2',
         name: 'First floor',
+        rowPitchM: 2.4,
         rows: [{ id: 'row3', name: 'Row A', racks: [rack('r7', 'Rack 2A01', 'rack-42'), rack('r8', 'Rack 2A02', 'rack-42')] }],
       },
     ];
@@ -737,21 +1139,17 @@
       { id: 'c-archive', name: 'Archive', color: '#1f9fc9' },
     ];
     let n = 0;
-    const add = (type, name, cluster, rackId, kind, at, extra) =>
-      p.devices.push(
-        Object.assign(
-          { id: `ex-${++n}`, type, name, cluster, notes: '', serial: '', asset: '', ip: '', owner: '', powerW: null, weightKg: null, loc: { rack: rackId, kind, at } },
-          extra
-        )
-      );
+    const add = (type, name, cluster, rackId, kind, at, extra) => p.devices.push(newDevice(Object.assign({ id: `ex-${++n}`, type, name, cluster, loc: { rack: rackId, kind, at } }, extra)));
+    // Switches are mounted back to front, so their ports face the servers' rear.
+    const sw = { reversed: true };
 
     // Row A: every rack gets a management switch and a high-speed leaf on top.
     ['r1', 'r2', 'r3'].forEach((r, i) => {
-      add('switch-rj45', `sw-mgmt-a0${i + 1}`, 'c-net', r, 'u', 1);
-      add('switch-qsfp', `ib-leaf-a0${i + 1}`, 'c-net', r, 'u', 2);
+      add('switch-rj45', `sw-mgmt-a0${i + 1}`, 'c-net', r, 'u', 1, sw);
+      add('switch-qsfp', `ib-leaf-a0${i + 1}`, 'c-net', r, 'u', 2, sw);
     });
-    add('switch-rj45', 'sw-bmc-a01', 'c-net', 'r1', 'side', 0);
-    add('switch-rj45', 'sw-bmc-a03', 'c-net', 'r3', 'side', 0);
+    add('switch-rj45', 'sw-bmc-a01', 'c-net', 'r1', 'side', 0, sw);
+    add('switch-rj45', 'sw-bmc-a03', 'c-net', 'r3', 'side', 0, sw);
     for (let i = 0; i < 12; i++) add('compute-node', `cn-${String(i + 1).padStart(3, '0')}`, 'c-kestrel', 'r1', 'u', 4 + i * 2);
     for (let i = 0; i < 8; i++) add('compute-node', `gpu-${String(i + 1).padStart(3, '0')}`, 'c-osprey', 'r2', 'u', 4 + i * 2);
     for (let i = 0; i < 3; i++) add('storage-node', `ceph-0${i + 1}`, 'c-ceph', 'r2', 'u', 24 + i * 4);
@@ -762,33 +1160,126 @@
     // Row B: core network, then GPU servers with room kept for the next batch.
     add('patch-panel', 'pp-b01-1', null, 'r4', 'u', 1);
     add('patch-panel', 'pp-b01-2', null, 'r4', 'u', 2);
-    add('switch-qsfp', 'core-sw-01', 'c-net', 'r4', 'u', 4);
-    add('switch-qsfp', 'core-sw-02', 'c-net', 'r4', 'u', 5);
-    add('switch-rj45', 'sw-mgmt-b01', 'c-net', 'r4', 'u', 6);
+    add('switch-qsfp', 'core-sw-01', 'c-net', 'r4', 'u', 4, sw);
+    add('switch-qsfp', 'core-sw-02', 'c-net', 'r4', 'u', 5, sw);
+    add('switch-rj45', 'sw-mgmt-b01', 'c-net', 'r4', 'u', 6, sw);
     add('reserved', 'Core expansion', null, 'r4', 'u', 8, { height: 6, notes: 'Second spine pair, next budget year' });
     for (const r of ['r4', 'r5', 'r6']) {
       const k = r.slice(1) - 3;
       add('pdu', `pdu-b0${k}-a`, null, r, 'side', 0);
       add('pdu', `pdu-b0${k}-b`, null, r, 'side', 1);
     }
-    add('switch-qsfp', 'ib-leaf-b02', 'c-heron', 'r5', 'u', 1);
-    add('switch-qsfp', 'ib-leaf-b03', 'c-heron', 'r6', 'u', 1);
+    add('switch-osfp', 'ib-leaf-b02', 'c-heron', 'r5', 'u', 1, sw);
+    add('switch-osfp', 'ib-leaf-b03', 'c-heron', 'r6', 'u', 1, sw);
     for (let i = 0; i < 3; i++) add('gpu-server', `gpu-srv-0${i + 1}`, 'c-heron', 'r5', 'u', 3 + i * 4);
     for (let i = 0; i < 3; i++) add('gpu-server', `gpu-srv-0${i + 4}`, 'c-heron', 'r6', 'u', 3 + i * 4);
     add('reserved', 'GPU batch 2', 'c-heron', 'r6', 'u', 16, { height: 8, powerW: 6000, notes: 'Two more GPU servers, power already booked' });
 
     // First floor: an archive on smaller racks.
-    add('switch-rj45', 'sw-arc-01', 'c-archive', 'r7', 'u', 1);
+    add('switch-rj45', 'sw-arc-01', 'c-archive', 'r7', 'u', 1, sw);
     add('storage-node', 'arc-01', 'c-archive', 'r7', 'u', 3);
     add('storage-node', 'arc-02', 'c-archive', 'r8', 'u', 3);
     for (let i = 0; i < 4; i++) add('storage-enclosure', `arc-jbod-0${i + 1}`, 'c-archive', i < 2 ? 'r7' : 'r8', 'u', 7 + (i % 2) * 4);
+
+    addExampleCabling(p);
     return p;
+  }
+
+  /** The example's networks and cables, numbered per network in the order they are made. */
+  function addExampleCabling(p) {
+    p.networks = [
+      { id: 'n-mgmt', name: 'Management', color: '#3aa655', firstLabel: 'MGT-0001' },
+      { id: 'n-bmc', name: 'BMC', color: '#d9a21b', firstLabel: 'BMC-0001' },
+      { id: 'n-ib', name: 'InfiniBand', color: '#2f6fdb', firstLabel: 'IB-0001' },
+      { id: 'n-stor', name: 'Storage 25G', color: '#1f9fc9', firstLabel: 'ST-0001' },
+      { id: 'n-sas', name: 'SAS', color: '#8a5cd6', firstLabel: 'SAS-0001' },
+    ];
+    const byName = new Map(p.devices.map((d) => [d.name, d.id]));
+    const counts = new Map();
+    const end = ([name, port]) => ({ device: byName.get(name), port });
+    const link = (network, a, b, extra) => {
+      const net = p.networks.find((x) => x.id === network);
+      const k = (counts.get(network) || 0) + 1;
+      counts.set(network, k);
+      p.cables.push(
+        Object.assign(
+          { id: `cb-${p.cables.length + 1}`, type: null, network, label: formatSerial(parseSerial(net.firstLabel), k), lengthM: null, notes: '', a: end(a), b: Array.isArray(b[0]) ? b.map(end) : end(b) },
+          extra
+        )
+      );
+    };
+    const n3 = (i) => String(i).padStart(3, '0');
+
+    // Rack A01: Kestrel compute nodes.
+    for (let i = 1; i <= 12; i++) {
+      link('n-mgmt', [`cn-${n3(i)}`, 'eth0'], ['sw-mgmt-a01', `swp${i}`]);
+      link('n-bmc', [`cn-${n3(i)}`, 'bmc'], ['sw-bmc-a01', `swp${i}`]);
+      link('n-ib', [`cn-${n3(i)}`, 'ib0'], ['ib-leaf-a01', `p${i}`]);
+    }
+    // Rack A02: Osprey GPU nodes and Ceph.
+    for (let i = 1; i <= 8; i++) {
+      link('n-mgmt', [`gpu-${n3(i)}`, 'eth0'], ['sw-mgmt-a02', `swp${i}`]);
+      link('n-bmc', [`gpu-${n3(i)}`, 'bmc'], ['sw-bmc-a01', `swp${12 + i}`]);
+      link('n-ib', [`gpu-${n3(i)}`, 'ib0'], ['ib-leaf-a02', `p${i}`]);
+    }
+    for (let i = 1; i <= 3; i++) {
+      const ceph = `ceph-0${i}`;
+      link('n-mgmt', [ceph, 'eth0'], ['sw-mgmt-a02', `swp${8 + i}`]);
+      link('n-stor', [ceph, 'eth1'], ['sw-mgmt-a02', `swp${48 + i}`]);
+      link('n-bmc', [ceph, 'bmc'], ['sw-bmc-a03', `swp${i}`]);
+      link('n-ib', [ceph, 'ib0'], ['ib-leaf-a02', `p${8 + i}`]);
+      // The last one was ordered as a DAC, which does not reach the next rack.
+      link('n-ib', [ceph, 'ib1'], ['ib-leaf-a03', `p${8 + i}`], i === 3 ? { type: 'dac-qsfp56' } : null);
+    }
+    // Rack A03: Lustre servers, each attached to every enclosure.
+    for (let i = 1; i <= 2; i++) {
+      const oss = `oss-0${i}`;
+      link('n-mgmt', [oss, 'eth0'], ['sw-mgmt-a03', `swp${i}`]);
+      link('n-bmc', [oss, 'bmc'], ['sw-bmc-a03', `swp${3 + i}`]);
+      link('n-ib', [oss, 'ib0'], ['ib-leaf-a03', `p${2 * i - 1}`]);
+      link('n-ib', [oss, 'ib1'], ['ib-leaf-a03', `p${2 * i}`]);
+      for (let j = 1; j <= 4; j++) link('n-sas', [oss, `sas${j - 1}`], [`jbod-0${j}`, i === 1 ? 'sas-a' : 'sas-b']);
+    }
+    for (let j = 1; j <= 4; j++) link('n-mgmt', [`jbod-0${j}`, 'mgmt'], ['sw-mgmt-a03', `swp${2 + j}`]);
+    // Row A uplinks: BMC switches into management, management over fiber to Row B, leaves to the core.
+    link('n-bmc', ['sw-bmc-a01', 'swp48'], ['sw-mgmt-a01', 'swp48']);
+    link('n-bmc', ['sw-bmc-a03', 'swp48'], ['sw-mgmt-a03', 'swp48']);
+    for (let k = 1; k <= 3; k++) {
+      link('n-mgmt', [`sw-mgmt-a0${k}`, 'swp52'], ['sw-mgmt-b01', `swp${48 + k}`], { type: 'lc-om4' });
+      const leaf = `ib-leaf-a0${k}`;
+      link('n-ib', [leaf, 'p21'], ['core-sw-01', `p${2 * k - 1}`], { type: 'mpo-om4' });
+      link('n-ib', [leaf, 'p22'], ['core-sw-01', `p${2 * k}`], { type: 'mpo-om4' });
+      link('n-ib', [leaf, 'p23'], ['core-sw-02', `p${2 * k - 1}`], { type: 'mpo-om4' });
+      link('n-ib', [leaf, 'p24'], ['core-sw-02', `p${2 * k}`], { type: 'mpo-om4' });
+    }
+    // Row B: Heron GPU servers on breakout cables, two GPU ports per leaf port.
+    for (let i = 1; i <= 6; i++) {
+      const gpu = `gpu-srv-0${i}`;
+      const leaf = i <= 3 ? 'ib-leaf-b02' : 'ib-leaf-b03';
+      const j = (i - 1) % 3;
+      link('n-ib', [leaf, `p${2 * j + 1}`], [[gpu, 'ib0'], [gpu, 'ib1']], { type: 'dac-osfp-2x' });
+      link('n-ib', [leaf, `p${2 * j + 2}`], [[gpu, 'ib2'], [gpu, 'ib3']], { type: 'dac-osfp-2x' });
+      link('n-mgmt', [gpu, 'eth0'], ['sw-mgmt-b01', `swp${i}`]);
+      link('n-bmc', [gpu, 'bmc'], ['sw-mgmt-b01', `swp${12 + i}`]);
+    }
+    // Leaf uplinks split over both core switches; Rack B03 is too far for a DAC.
+    for (const [leaf, type, first] of [['ib-leaf-b02', 'dac-osfp-2x', 7], ['ib-leaf-b03', 'aoc-osfp-2x', 9]]) {
+      link('n-ib', [leaf, 'p31'], [['core-sw-01', `p${first}`], ['core-sw-02', `p${first}`]], { type });
+      link('n-ib', [leaf, 'p32'], [['core-sw-01', `p${first + 1}`], ['core-sw-02', `p${first + 1}`]], { type });
+    }
+    // First floor: the archive, with its management uplink down a riser.
+    link('n-mgmt', ['arc-01', 'eth0'], ['sw-arc-01', 'swp1']);
+    link('n-mgmt', ['arc-02', 'eth0'], ['sw-arc-01', 'swp2']);
+    for (const [arc, jbods] of [['arc-01', ['arc-jbod-01', 'arc-jbod-02']], ['arc-02', ['arc-jbod-03', 'arc-jbod-04']]]) {
+      jbods.forEach((jbod, k) => link('n-sas', [arc, `sas${k}`], [jbod, 'sas-a']));
+    }
+    link('n-mgmt', ['sw-arc-01', 'swp52'], ['sw-mgmt-b01', 'swp52'], { type: 'lc-om4', lengthM: 30, notes: 'Riser to the ground floor' });
   }
 
   /** True when the plan still equals the example (the notice flag aside). */
   function isPristineExample(project) {
     const ex = createExampleProject();
-    const pick = (p) => JSON.stringify([p.name, p.info, p.deviceTypes, p.rackTypes, p.floors, p.clusters, p.devices]);
+    const pick = (p) => JSON.stringify([p.name, p.info, p.deviceTypes, p.rackTypes, p.cableTypes, p.transceivers, p.floors, p.clusters, p.networks, p.devices, p.cables]);
     return pick(project) === pick(ex);
   }
 
@@ -1121,20 +1612,25 @@
 
   /**
    * Adds copies of the devices in racks that `rackMap` maps (old rack id →
-   * new rack id), at the same positions.
+   * new rack id), at the same positions, with the cables between them.
    */
   function copyDevicesInto(project, rackMap) {
     const moves = sortedDevices(project)
       .filter((d) => rackMap.has(d.loc.rack))
       .map((d) => ({ id: d.id, loc: Object.assign({}, d.loc, { rack: rackMap.get(d.loc.rack) }) }));
-    project.devices.push(...copiesAt(project, moves));
+    const copies = copiesAt(project, moves);
+    project.devices.push(...copies);
+    copyCables(project, new Map(moves.map((m, i) => [m.id, copies[i].id])));
   }
 
   /** Inserts a copy of a rack, with copies of its devices, right after it. Null when the row is full. */
   function duplicateRack(project, rackId) {
     const pos = locateRack(project, rackId);
     const rack = pos && addRack(project, pos.row.id, { index: pos.index + 1, type: pos.rack.type });
-    if (rack) copyDevicesInto(project, new Map([[rackId, rack.id]]));
+    if (rack) {
+      Object.assign(rack, { trayM: orNull(pos.rack.trayM), slackM: orNull(pos.rack.slackM) });
+      copyDevicesInto(project, new Map([[rackId, rack.id]]));
+    }
     return rack || null;
   }
 
@@ -1146,7 +1642,7 @@
   function copyRowInto(project, source, floor, index, name, rackMap) {
     const row = insertRow(project, floor, name, index);
     source.racks.forEach((r, i) => {
-      const rack = { id: nextId('r', structureIds(project)), name: defaultRackName(project, row.id, i), type: r.type };
+      const rack = { id: nextId('r', structureIds(project)), name: defaultRackName(project, row.id, i), type: r.type, trayM: orNull(r.trayM), slackM: orNull(r.slackM) };
       row.racks.push(rack);
       rackMap.set(r.id, rack.id);
     });
@@ -1170,6 +1666,7 @@
     const source = project.floors[i];
     const floor = insertFloor(project, `${source.name} (copy)`, i + 1);
     if (!floor) return null;
+    if (source.rowPitchM) floor.rowPitchM = source.rowPitchM;
     // Rows keep their names on the copied floor, and racks are named after them.
     const map = new Map();
     source.rows.forEach((r) => copyRowInto(project, r, floor, null, r.name, map));
@@ -1330,9 +1827,318 @@
   /** A new device with every field set; `props` overrides the defaults. */
   function newDevice(props) {
     return Object.assign(
-      { id: uid('d'), type: '', name: '', cluster: null, notes: '', serial: '', asset: '', ip: '', owner: '', powerW: null, weightKg: null, loc: null },
+      { id: uid('d'), type: '', name: '', cluster: null, notes: '', serial: '', asset: '', ip: '', owner: '', powerW: null, weightKg: null, reversed: false, slackM: null, loc: null },
       props
     );
+  }
+
+  // ----------------------------------------------------------------- cables
+
+  /** The set ends of a cable: [{ end, role: 'a'|'b', leg }], `leg` being the index in a breakout's `b` (null otherwise). */
+  function cableEnds(cable) {
+    const out = cable.a ? [{ end: cable.a, role: 'a', leg: null }] : [];
+    if (Array.isArray(cable.b)) cable.b.forEach((e, i) => e && out.push({ end: e, role: 'b', leg: i }));
+    else if (cable.b) out.push({ end: cable.b, role: 'b', leg: null });
+    return out;
+  }
+  /** The `b` ends of a cable as a list: the legs of a breakout, or the one far end. */
+  function legsOf(cable) {
+    return Array.isArray(cable.b) ? cable.b : [cable.b];
+  }
+  const portKey = (device, port) => `${device}|${port}`;
+
+  /** A cable end from untrusted input: { device, port } and `transceiver` when one is chosen. */
+  function cleanCableEnd(raw) {
+    if (!isObj(raw)) return null;
+    const end = { device: String(raw.device == null ? '' : raw.device), port: String(raw.port == null ? '' : raw.port) };
+    if (raw.transceiver) end.transceiver = String(raw.transceiver);
+    return end;
+  }
+
+  /**
+   * What checking cables needs, built once: devices and their port names by
+   * id, and the ports already taken by cables other than `ignoreCableId`.
+   * `used` maps "device|port" to the cable there.
+   */
+  function cableContext(project, ignoreCableId) {
+    const byType = new Map();
+    const ports = new Map();
+    const devices = new Map();
+    for (const d of project.devices) {
+      let names = byType.get(d.type);
+      if (!names) byType.set(d.type, (names = new Set(expandPorts(typeOf(project, d.type)).map((p) => p.name))));
+      ports.set(d.id, names);
+      devices.set(d.id, d);
+    }
+    const used = new Map();
+    for (const c of project.cables || []) {
+      if (c.id === ignoreCableId) continue;
+      for (const x of cableEnds(c)) used.set(portKey(x.end.device, x.end.port), c);
+    }
+    return { devices, ports, used };
+  }
+
+  /** Marks the ports of `cable` as taken in a context from cableContext. */
+  function claimPorts(ctx, cable) {
+    for (const x of cableEnds(cable)) ctx.used.set(portKey(x.end.device, x.end.port), cable);
+  }
+
+  /**
+   * Why `cable` cannot be in the plan, or null: an end on a device or port
+   * that does not exist, a port that already has a cable, the same port
+   * twice, a device cabled to itself, a type, transceiver or network that is
+   * not in the plan, or legs that don't match a breakout type.
+   */
+  function cableProblem(project, cable, ctx) {
+    const c = ctx || cableContext(project, cable.id);
+    const type = cable.type ? cableTypeById(project, cable.type) : null;
+    if (cable.type && !type) return `Unknown cable type “${cable.type}”`;
+    if (cable.network && !networkById(project, cable.network)) return `Unknown network “${cable.network}”`;
+    if (Array.isArray(cable.b)) {
+      if (!type || type.legs < 2) return 'A breakout cable needs a breakout cable type';
+      if (cable.b.length !== type.legs) return `${type.name} has ${type.legs} legs, not ${cable.b.length}`;
+      if (!cable.b.some(Boolean)) return 'A breakout cable needs at least one leg';
+    } else if (type && type.legs > 1) {
+      return `${type.name} is a breakout cable: give it its legs`;
+    }
+    if (!cable.a || (!Array.isArray(cable.b) && !cable.b)) return 'A cable needs two ends';
+    const seen = new Set();
+    for (const x of cableEnds(cable)) {
+      const e = x.end;
+      const d = c.devices.get(e.device);
+      if (!d) return `Unknown device “${e.device}”`;
+      if (!c.ports.get(d.id).has(e.port)) return `${d.name} has no port ${e.port}`;
+      if (e.transceiver && !transceiverById(project, e.transceiver)) return `Unknown transceiver “${e.transceiver}”`;
+      const key = portKey(e.device, e.port);
+      if (seen.has(key)) return `${d.name} ${e.port} is used twice in this cable`;
+      seen.add(key);
+      if (x.role === 'b' && e.device === cable.a.device) {
+        return x.leg === null ? `A cable cannot join ${d.name} to itself` : `The legs of a breakout cable go to other devices than ${d.name}, its head`;
+      }
+      const other = c.used.get(key);
+      if (other && other.id !== cable.id) return `${d.name} ${e.port} already has cable ${other.label || 'without a label'}`;
+    }
+    return null;
+  }
+
+  /**
+   * Drops cable ends on devices or ports that no longer exist (and ends on a
+   * port another cable already uses). A cable that loses its head or its far
+   * end goes; a breakout loses only the leg, unless none is left. Clears
+   * networks that no longer exist. Returns the number of cables removed or
+   * changed.
+   */
+  function pruneCables(project) {
+    if (!Array.isArray(project.cables) || !project.cables.length) return 0;
+    const ctx = cableContext(Object.assign({}, project, { cables: [] }));
+    const nets = new Set((project.networks || []).map((n) => n.id));
+    const used = new Set();
+    const free = (e) => !!e && ctx.ports.has(e.device) && ctx.ports.get(e.device).has(e.port) && !used.has(portKey(e.device, e.port));
+    let changed = 0;
+    const keep = (c) => {
+      if (!free(c.a)) return false;
+      const head = portKey(c.a.device, c.a.port);
+      used.add(head);
+      if (!Array.isArray(c.b)) {
+        const ok = free(c.b) && c.b.device !== c.a.device;
+        if (ok) used.add(portKey(c.b.device, c.b.port));
+        else used.delete(head);
+        return ok;
+      }
+      const legs = c.b.map((e) => {
+        if (!e || e.device === c.a.device || !free(e)) return null;
+        used.add(portKey(e.device, e.port));
+        return e;
+      });
+      if (!legs.some(Boolean)) {
+        used.delete(head);
+        return false;
+      }
+      if (legs.some((e, i) => e !== c.b[i])) {
+        c.b = legs;
+        return 'changed';
+      }
+      return true;
+    };
+    project.cables = project.cables.filter((c) => {
+      const lostNetwork = !!c.network && !nets.has(c.network);
+      if (lostNetwork) c.network = null;
+      const k = keep(c);
+      if (!k || k === 'changed' || lostNetwork) changed++;
+      return !!k;
+    });
+    return changed;
+  }
+
+  const LABEL_MAX = 40;
+
+  /** formatSerial within the length of a label: a number that outgrows it shortens the head (LLL-9999 → LL-10000). */
+  function formatLabel(s, n) {
+    const num = String(n).padStart(s.width, '0');
+    const head = s.head.slice(0, Math.max(0, LABEL_MAX - num.length - s.tail.length));
+    return (head + num + s.tail).slice(0, LABEL_MAX).trim();
+  }
+
+  /** Series of a label to continue: IB-0009 → IB-0010; a label without a number starts one (uplink → uplink-0001). */
+  const labelSeries = (seed) => parseSerial(seed) || { head: `${seed}-`, num: 1, width: 4, tail: '' };
+
+  /**
+   * Hands out cable labels that continue series past the highest label of
+   * each series among the plan's cables and `taken` (a Set), reading those
+   * once, or (with `from`) fill a series from a label given by hand. Every
+   * label handed out counts as taken.
+   */
+  function labeler(project, taken) {
+    const used = new Set((project.cables || []).map((c) => c.label));
+    if (taken) for (const l of taken) used.add(l);
+    const highest = new Map();
+    const note = (label) => {
+      const o = parseSerial(label);
+      if (o) highest.set(`${o.head}\u0000${o.tail}`, Math.max(highest.get(`${o.head}\u0000${o.tail}`) || 0, o.num));
+    };
+    used.forEach(note);
+    const take = (label) => {
+      used.add(label);
+      note(label);
+      return label;
+    };
+    return {
+      /** The next label of the series `seed` starts; with `inclusive`, `seed` itself may be it. */
+      next(seed, inclusive) {
+        const s = labelSeries(seed);
+        const max = Math.max(inclusive ? s.num - 1 : s.num, highest.get(`${s.head}\u0000${s.tail}`) || 0);
+        return take(firstFree(used, max + 1, (n) => formatLabel(s, n)));
+      },
+      /** Counts `label` as taken (a label given by hand) and returns it. */
+      take,
+      /**
+       * `seed` itself when free, else the first free label of its series
+       * after it (not past the highest). A seed without a number is a series
+       * to start (uplink → uplink-0001, see labelSeries), never kept as it
+       * is: a label kept as typed is take's.
+       */
+      from(seed) {
+        const s = labelSeries(seed);
+        return take(firstFree(used, s.num, (n) => formatLabel(s, n)));
+      },
+      /** The label after `label`: IB-0009 → IB-0010 (past the highest used), uplink → uplink-2. */
+      after(label) {
+        return parseSerial(label) ? this.next(label, false) : take(firstFree(used, 2, (i) => `${label.slice(0, LABEL_MAX - 1 - String(i).length)}-${i}`));
+      },
+    };
+  }
+
+  /**
+   * The next label of the series `seed` starts: one past the highest label of
+   * that series among the plan's cables and `taken` (a Set). With
+   * `inclusive`, `seed` itself may be the answer.
+   */
+  function continueLabel(project, seed, inclusive, taken) {
+    return labeler(project, taken).next(seed, inclusive);
+  }
+
+  /** The label after `label` in its series (IB-0009 → IB-0010 past the highest used); uplink → uplink-2. */
+  function nextLabelAfter(project, label, taken) {
+    return labeler(project, taken).after(label);
+  }
+
+  /** First label of the series of a network's cables (null: no network, C-0001 …). */
+  function labelSeed(project, networkId) {
+    const net = networkById(project, networkId);
+    return net ? net.firstLabel || defaultFirstLabel(net.name) : 'C-0001';
+  }
+
+  /** Label for a new cable of a network (null: none): its series continued. */
+  function nextCableLabel(project, networkId, taken) {
+    return continueLabel(project, labelSeed(project, networkId), true, taken);
+  }
+
+  /**
+   * Copies the cables between devices that were copied: `idMap` maps old to
+   * new device ids. A cable is copied when all its ends are on mapped
+   * devices; the copy continues the original's label series. Returns the
+   * copies.
+   */
+  function copyCables(project, idMap) {
+    if (!Array.isArray(project.cables) || !idMap.size) return [];
+    const labels = labeler(project);
+    const out = [];
+    for (const c of project.cables.slice()) {
+      const ends = cableEnds(c);
+      if (!ends.length || !ends.every((x) => idMap.has(x.end.device))) continue;
+      if (project.cables.length + out.length >= LIMITS.cables) break;
+      const copy = clone(c);
+      copy.id = uid('cb');
+      copy.label = c.label ? labels.after(c.label) : labels.next(labelSeed(project, c.network), true);
+      for (const x of cableEnds(copy)) x.end.device = idMap.get(x.end.device);
+      out.push(copy);
+    }
+    project.cables.push(...out);
+    return out;
+  }
+
+  /**
+   * Where each port of the groups `oldPorts` goes in the groups `newPorts`:
+   * a Map from old to new port name. Groups are matched first by their
+   * pattern (swp[1-48]), then by name, then the groups left over are paired
+   * in order when as many are left on both sides (groups renamed in place).
+   * A port keeps its place in its matched group; a port without one keeps
+   * its name when that port still exists and no other port moves to it.
+   */
+  function portMoves(oldPorts, newPorts) {
+    const olds = Array.isArray(oldPorts) ? oldPorts : [];
+    const news = Array.isArray(newPorts) ? newPorts : [];
+    const match = new Map();
+    const taken = new Set();
+    const pair = (same) => {
+      olds.forEach((g, i) => {
+        if (match.has(i)) return;
+        const j = news.findIndex((h, k) => !taken.has(k) && same(g, h));
+        if (j < 0) return;
+        match.set(i, j);
+        taken.add(j);
+      });
+    };
+    pair((g, h) => portPattern(g) === portPattern(h));
+    pair((g, h) => g.name === h.name);
+    const leftOld = olds.map((g, i) => i).filter((i) => !match.has(i));
+    const leftNew = news.map((h, j) => j).filter((j) => !taken.has(j));
+    if (leftOld.length === leftNew.length) leftOld.forEach((i, k) => match.set(i, leftNew[k]));
+    const names = news.map((h) => groupNames(h));
+    const out = new Map();
+    const targets = new Set();
+    olds.forEach((g, i) => {
+      if (!match.has(i)) return;
+      groupNames(g).forEach((name, place) => {
+        const to = names[match.get(i)][place];
+        if (to === undefined) return;
+        out.set(name, to);
+        targets.add(to);
+      });
+    });
+    const after = new Set([].concat(...names));
+    for (const g of olds) for (const name of groupNames(g)) if (!out.has(name) && after.has(name) && !targets.has(name)) out.set(name, name);
+    return out;
+  }
+
+  /**
+   * After the ports of a device type changed from `oldPorts`, moves the
+   * cable ends on its devices to the port at the same place (see portMoves)
+   * and drops the ends whose place is gone.
+   */
+  function remapPorts(project, typeId, oldPorts) {
+    const type = typeOf(project, typeId);
+    if (!type || !Array.isArray(project.cables)) return 0;
+    const moves = portMoves(oldPorts, type.ports);
+    const devices = new Set(project.devices.filter((d) => d.type === typeId).map((d) => d.id));
+    for (const c of project.cables) {
+      for (const x of cableEnds(c)) {
+        if (!devices.has(x.end.device)) continue;
+        // Port names are never empty, so prune removes an end set to ''.
+        x.end.port = moves.get(x.end.port) || '';
+      }
+    }
+    return pruneCables(project);
   }
 
   // ------------------------------------------------------------- statistics
@@ -1540,9 +2346,15 @@
     RESERVED,
     FIELDS,
     CLUSTER_COLORS,
+    CONNECTORS,
+    MEDIA,
+    DEFAULT_CABLE_TYPES,
+    DEFAULT_TRANSCEIVERS,
+    DEFAULT_ROW_PITCH_M,
     clone,
     str,
     plural,
+    pluralName,
     slug,
     clampInt,
     clampNum,
@@ -1572,8 +2384,30 @@
     deviceSpan,
     powerOf,
     weightOf,
+    rackTrayM,
+    rackSlackM,
+    deviceSlackM,
+    cableTypeById,
+    transceiverById,
+    networkById,
+    connectorById,
+    plugFits,
+    cleanPortGroup,
+    cleanPorts,
+    portsProblem,
+    groupNames,
+    expandPorts,
+    portPattern,
+    parsePortPattern,
+    portPatternProblem,
     cleanDeviceType,
     cleanRackType,
+    mediaConnectors,
+    cleanCableType,
+    cleanTransceiver,
+    cleanNetwork,
+    defaultFirstLabel,
+    nextNetworkColor,
     formatTypeSpec,
     addDeviceType,
     updateDeviceType,
@@ -1642,12 +2476,28 @@
     nextClusterColor,
     nextClusterName,
     newDevice,
+    cableEnds,
+    legsOf,
+    cleanCableEnd,
+    cableContext,
+    claimPorts,
+    cableProblem,
+    pruneCables,
+    labeler,
+    labelSeed,
+    continueLabel,
+    nextLabelAfter,
+    nextCableLabel,
+    copyCables,
+    portMoves,
+    remapPorts,
     statsByRack,
     rackStats,
     sumStats,
     statsWithin,
     sortedDevices,
     devicesByRack,
+    queryWords,
     deviceMatcher,
     search,
   };

@@ -6,14 +6,16 @@
  * Rackplanner: reading and writing plans.
  *
  * Validates untrusted plan files (all schema versions), serializes plans,
- * exports and imports CSV inventories, and packs plans into share links.
- * No DOM access; shared by the browser app and the Node tests.
+ * exports and imports CSV inventories and cable schedules, and packs plans
+ * into share links. No DOM access; shared by the browser app and the Node
+ * tests.
  */
 (function (root, factory) {
   'use strict';
-  if (typeof module === 'object' && module.exports) module.exports = factory(require('./model.js'));
-  else (root.RP = root.RP || {}).io = factory(root.RP.model);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (M) {
+  // Only the cable CSVs need cabling.js, so it is looked up when they run.
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./model.js'), () => require('./cabling.js'));
+  else (root.RP = root.RP || {}).io = factory(root.RP.model, () => root.RP.cabling);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (M, cabling) {
   'use strict';
 
   const L = M.LIMITS;
@@ -47,6 +49,27 @@
   }
 
   /**
+   * Names tell cable types and transceivers apart in cable schedules: a
+   * name used before gets a number no other entry has.
+   */
+  function uniqueNames(list, kind, warnings) {
+    const used = new Set(list.map((t) => t.name));
+    const seen = new Set();
+    for (const t of list) {
+      if (seen.has(t.name)) {
+        const base = t.name.slice(0, 56);
+        let i = 2;
+        while (used.has(`${base} ${i}`)) i++;
+        warnings.push(`Renamed the ${kind} ${t.name} to ${base} ${i}: the name is used twice.`);
+        t.name = `${base} ${i}`;
+        used.add(t.name);
+      }
+      seen.add(t.name);
+    }
+    return list;
+  }
+
+  /**
    * Builds floors, rows and racks. Returns a map from the file's rack ids to
    * the plan's. Version 1 and 2 files have a flat list of racks, which
    * becomes one row; their rack ids are mapped to r1..rN by position.
@@ -76,7 +99,7 @@
           droppedFloors++;
           continue;
         }
-        const floor = { id: claim(idOf(f.id), 'f'), name: str(f.name, 60) || M.nextFloorName(p), rows: [] };
+        const floor = { id: claim(idOf(f.id), 'f'), name: str(f.name, 60) || M.nextFloorName(p), rowPitchM: M.clampNum(f.rowPitchM, 0.5, 50, M.DEFAULT_ROW_PITCH_M), rows: [] };
         let droppedRows = 0;
         for (const r of (Array.isArray(f.rows) ? f.rows : []).filter(isObj)) {
           if (floor.rows.length >= L.rows) {
@@ -93,7 +116,7 @@
             if (fileId && !rackIds.has(fileId)) rackIds.set(fileId, id);
             else if (fileId) warnings.push(`Rack id “${fileId}” is used twice; devices go to the first rack with it.`);
             if (!name) unnamed.add(id);
-            row.racks.push({ id, name, type: rackType(k.type, name || 'A rack') });
+            row.racks.push({ id, name, type: rackType(k.type, name || 'A rack'), trayM: M.clampNum(k.trayM, 0, 10, null), slackM: M.clampNum(k.slackM, 0, 10, null) });
           }
           if (row.racks.length) floor.rows.push(row);
           else warnings.push(`Skipped ${floor.name} · ${row.name}: it has no racks.`);
@@ -128,6 +151,100 @@
   }
 
   /**
+   * Files before version 4 have no ports, lengths or slack: standard types
+   * (matched by id) get the standard values of the fields they lack.
+   */
+  function withStandard(list, standard, keys) {
+    if (!Array.isArray(list)) return list;
+    return list.map((t) => {
+      const std = isObj(t) && standard.find((x) => x.id === idOf(t.id));
+      if (!std) return t;
+      const out = Object.assign({}, t);
+      for (const k of keys) if (!(k in t)) out[k] = M.clone(std[k]);
+      return out;
+    });
+  }
+
+  /**
+   * Reads clusters or networks into `out` (`make` builds one, seeing the
+   * ones before it). Ids starting with "__" are reserved for the app and
+   * replaced. Returns a map from the file's ids to the plan's.
+   */
+  function readGroups(list, kind, max, out, make, warnings) {
+    const ids = new Map();
+    (Array.isArray(list) ? list : []).forEach((c, i) => {
+      if (!isObj(c)) return;
+      const fileId = idOf(c.id);
+      const label = str(c.name, 60) || `#${i + 1}`;
+      if (!fileId) return void warnings.push(`Skipped ${kind} ${label}: it has no id.`);
+      if (ids.has(fileId)) return void warnings.push(`Skipped ${kind} ${label}: its id “${fileId}” is used twice.`);
+      if (out.length >= max) return void warnings.push(`Skipped ${kind} ${label}: a plan holds ${max} ${kind}s.`);
+      const id = fileId.startsWith('__') ? M.uid(kind[0]) : fileId;
+      ids.set(fileId, id);
+      out.push(make(c, id));
+    });
+    return ids;
+  }
+
+  /**
+   * Reads the cables of a file. Ends refer to devices by their id in the
+   * file (`deviceIds` maps them to the plan's) and to ports by name. A
+   * cable that would break the plan's rules is skipped with a warning.
+   */
+  function readCables(list, p, deviceIds, networkIds, warnings) {
+    const ctx = M.cableContext(p);
+    const ids = new Set();
+    let dropped = 0;
+    (Array.isArray(list) ? list : []).forEach((c, i) => {
+      if (!isObj(c)) return;
+      const label = str(c.label, 40);
+      const what = label ? `cable ${label}` : `cable ${i + 1}`;
+      const skip = (why) => void warnings.push(`Skipped ${what}: ${why}.`);
+      if (p.cables.length >= L.cables) return void dropped++;
+      const type = idOf(c.type);
+      if (type && !M.cableTypeById(p, type)) return skip(`unknown cable type “${type}”`);
+      let network = idOf(c.network);
+      if (network && !networkIds.has(network)) {
+        warnings.push(`${label ? `Cable ${label}` : `Cable ${i + 1}`} refers to unknown network “${network}” and has none.`);
+        network = '';
+      }
+      let problem = null;
+      const end = (e) => {
+        if (!isObj(e)) return null;
+        const fileId = idOf(e.device);
+        const device = deviceIds.get(fileId);
+        if (!device) problem = problem || (fileId ? `device “${fileId}” is not in the plan` : 'an end has no device');
+        const out = { device: device || '', port: idOf(e.port) };
+        const tr = idOf(e.transceiver);
+        if (tr && !M.transceiverById(p, tr)) problem = problem || `unknown transceiver “${tr}”`;
+        if (tr) out.transceiver = tr;
+        return out;
+      };
+      const a = end(c.a);
+      const b = Array.isArray(c.b) ? c.b.slice(0, L.legs + 1).map(end) : end(c.b);
+      if (problem) return skip(problem);
+      let id = idOf(c.id);
+      if (!id || ids.has(id)) id = M.uid('cb');
+      const cable = {
+        id,
+        type: type || null,
+        network: network ? networkIds.get(network) : null,
+        label,
+        lengthM: M.clampNum(c.lengthM, 0.1, 10000, null),
+        notes: typeof c.notes === 'string' ? c.notes.slice(0, 2000) : '',
+        a,
+        b,
+      };
+      problem = M.cableProblem(p, cable, ctx);
+      if (problem) return skip(problem);
+      ids.add(id);
+      M.claimPorts(ctx, cable);
+      p.cables.push(cable);
+    });
+    if (dropped) warnings.push(`Only the first ${L.cables} cables were kept.`);
+  }
+
+  /**
    * Turns untrusted JSON (an imported file or saved state) into a valid
    * project. Anything that doesn't fit is dropped and reported in `warnings`.
    */
@@ -139,30 +256,26 @@
     const warnings = [];
     // Version 1 counted units from the bottom of the rack.
     const bottomUp = Number(raw.version) === 1;
+    const legacy = !(Number(raw.version) >= 4);
     const p = M.newProjectShell({ name: str(raw.name, 120) || 'Untitled rack plan' });
-    p.deviceTypes = readTypes(raw.deviceTypes, 'device type', 'label', M.cleanDeviceType, L.deviceTypes, [M.RESERVED.id], warnings) || p.deviceTypes;
-    const rackTypes = readTypes(raw.rackTypes, 'rack type', 'name', M.cleanRackType, L.rackTypes, [], warnings);
+    const deviceTypes = legacy ? withStandard(raw.deviceTypes, M.DEFAULT_DEVICE_TYPES, ['ports', 'slackM']) : raw.deviceTypes;
+    p.deviceTypes = readTypes(deviceTypes, 'device type', 'label', M.cleanDeviceType, L.deviceTypes, [M.RESERVED.id], warnings) || p.deviceTypes;
+    const rawRackTypes = legacy ? withStandard(raw.rackTypes, M.DEFAULT_RACK_TYPES, ['widthMm', 'depthMm', 'trayM', 'slackM']) : raw.rackTypes;
+    const rackTypes = readTypes(rawRackTypes, 'rack type', 'name', M.cleanRackType, L.rackTypes, [], warnings);
     if (rackTypes && rackTypes.length) p.rackTypes = rackTypes;
+    p.cableTypes = uniqueNames(readTypes(raw.cableTypes, 'cable type', 'name', M.cleanCableType, L.cableTypes, [], warnings) || p.cableTypes, 'cable type', warnings);
+    p.transceivers = uniqueNames(readTypes(raw.transceivers, 'transceiver', 'name', M.cleanTransceiver, L.transceivers, [], warnings) || p.transceivers, 'transceiver', warnings);
     if (isObj(raw.info)) for (const k of Object.keys(p.info)) p.info[k] = str(raw.info[k], 60);
     const rackIds = readLayout(raw, p, warnings);
 
-    // Cluster ids as written in the file → ids in the plan. Ids starting
-    // with "__" are reserved for the app ("__none", "__new") and replaced.
-    const clusterIds = new Map();
-    (Array.isArray(raw.clusters) ? raw.clusters : []).forEach((c, i) => {
-      if (!isObj(c)) return;
-      const fileId = idOf(c.id);
-      const label = str(c.name, 60) || `#${i + 1}`;
-      if (!fileId) return void warnings.push(`Skipped cluster ${label}: it has no id.`);
-      if (clusterIds.has(fileId)) return void warnings.push(`Skipped cluster ${label}: its id “${fileId}” is used twice.`);
-      const id = fileId.startsWith('__') ? M.uid('c') : fileId;
-      clusterIds.set(fileId, id);
-      p.clusters.push({ id, name: str(c.name, 60) || M.nextClusterName(p), color: M.normalizeHex(c.color) || M.nextClusterColor(p) });
-    });
+    // Cluster and network ids as written in the file → ids in the plan.
+    const clusterIds = readGroups(raw.clusters, 'cluster', Infinity, p.clusters, (c, id) => ({ id, name: str(c.name, 60) || M.nextClusterName(p), color: M.normalizeHex(c.color) || M.nextClusterColor(p) }), warnings);
+    const networkIds = readGroups(raw.networks, 'network', L.networks, p.networks, (n, id) => Object.assign(M.cleanNetwork(n, p), { id }), warnings);
 
     // Each device is checked against the devices already accepted in its rack.
     const perRack = new Map();
-    const deviceIds = new Set();
+    const deviceIds = new Map();
+    const planIds = new Set();
     (Array.isArray(raw.devices) ? raw.devices : []).forEach((d, i) => {
       if (!isObj(d)) return;
       let type = M.typeOf(p, idOf(d.type));
@@ -188,9 +301,12 @@
       if (!list) perRack.set(nloc.rack, (list = []));
       const fit = M.canPlace(Object.assign({}, p, { devices: list }), type.id, nloc, null, height);
       if (!fit.ok) return void warnings.push(`Skipped ${name}: ${fit.reason}.`);
-      let id = idOf(d.id);
-      if (!id || deviceIds.has(id)) id = M.uid('d');
-      deviceIds.add(id);
+      const fileId = idOf(d.id);
+      let id = fileId;
+      if (!id || planIds.has(id)) id = M.uid('d');
+      planIds.add(id);
+      // Cables find a device by its id in the file; with an id used twice, the first device.
+      if (fileId && !deviceIds.has(fileId)) deviceIds.set(fileId, id);
       const cluster = idOf(d.cluster);
       if (cluster && !clusterIds.has(cluster)) warnings.push(`${name} refers to unknown cluster “${cluster}” and is left unassigned.`);
       const dev = M.newDevice({
@@ -201,6 +317,8 @@
         notes: typeof d.notes === 'string' ? d.notes.slice(0, 2000) : '',
         powerW: M.clampNum(d.powerW, 0, 100000, null),
         weightKg: M.clampNum(d.weightKg, 0, 5000, null),
+        reversed: d.reversed === true,
+        slackM: M.clampNum(d.slackM, 0, 10, null),
         loc: nloc,
       });
       for (const f of M.FIELDS) dev[f.key] = str(d[f.key], 120);
@@ -208,11 +326,28 @@
       list.push(dev);
       p.devices.push(dev);
     });
+    readCables(raw.cables, p, deviceIds, networkIds, warnings);
     if (isObj(raw.meta) && raw.meta.example === true) p.meta.example = true;
     return { project: p, warnings };
   }
 
-  /** The plan as JSON. Empty optional device fields are left out. */
+  /** JSON with two-space indentation, except that the items of the lists `flat` names take one line each. */
+  function prettyJSON(obj, flat) {
+    const shell = Object.assign({}, obj);
+    for (const k of flat) shell[k] = `\u0000${k}`;
+    let text = JSON.stringify(shell, null, 2);
+    for (const k of flat) {
+      // The marker is the last string of its kind: only meta follows the lists.
+      const mark = JSON.stringify(shell[k]);
+      const at = text.lastIndexOf(mark);
+      const list = obj[k];
+      const body = list.length ? `[\n${list.map((x) => `    ${JSON.stringify(x)}`).join(',\n')}\n  ]` : '[]';
+      text = text.slice(0, at) + body + text.slice(at + mark.length);
+    }
+    return text;
+  }
+
+  /** The plan as JSON; devices and cables take a line each. Empty optional device fields are left out. */
   function serialize(project, opts) {
     const devices = project.devices.map((d) => {
       const o = { id: d.id, type: d.type, name: d.name, cluster: d.cluster || null };
@@ -220,26 +355,29 @@
       for (const f of M.FIELDS) if (d[f.key]) o[f.key] = d[f.key];
       if (d.powerW !== null && d.powerW !== undefined) o.powerW = d.powerW;
       if (d.weightKg !== null && d.weightKg !== undefined) o.weightKg = d.weightKg;
+      if (d.reversed) o.reversed = true;
+      if (d.slackM !== null && d.slackM !== undefined) o.slackM = d.slackM;
       if (d.type === M.RESERVED.id) o.height = M.deviceHeight(project, d);
       o.loc = d.loc;
       return o;
     });
-    return JSON.stringify(
-      {
-        app: 'rackplanner',
-        version: M.SCHEMA_VERSION,
-        name: project.name,
-        info: project.info,
-        deviceTypes: project.deviceTypes,
-        rackTypes: project.rackTypes,
-        floors: project.floors,
-        clusters: project.clusters,
-        devices,
-        meta: project.meta || {},
-      },
-      null,
-      opts && opts.compact ? 0 : 2
-    );
+    const plan = {
+      app: 'rackplanner',
+      version: M.SCHEMA_VERSION,
+      name: project.name,
+      info: project.info,
+      deviceTypes: project.deviceTypes,
+      rackTypes: project.rackTypes,
+      cableTypes: project.cableTypes || [],
+      transceivers: project.transceivers || [],
+      floors: project.floors,
+      clusters: project.clusters,
+      networks: project.networks || [],
+      devices,
+      cables: project.cables || [],
+      meta: project.meta || {},
+    };
+    return opts && opts.compact ? JSON.stringify(plan) : prettyJSON(plan, ['devices', 'cables']);
   }
 
   // ------------------------------------------------------------------- CSV
@@ -250,10 +388,18 @@
 
   function csvCell(value) {
     let s = String(value == null ? '' : value);
-    // Keep spreadsheet apps from evaluating cells as formulas.
-    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    // Keep spreadsheet apps from evaluating cells as formulas. A value that
+    // already looks guarded gets one more apostrophe, which parseCSV takes off.
+    if (/^'*[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   }
+
+  /** "U5-6" or "Side V1", as the CSVs write a device's position. */
+  function positionText(project, d) {
+    return d.loc.kind === 'side' ? `Side V${d.loc.at + 1}` : M.formatPosition(project, d.loc, d.type, d.height).replace('–', '-');
+  }
+
+  const csvText = (rows) => rows.map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
 
   function toCSV(project) {
     const rows = [CSV_COLUMNS];
@@ -267,7 +413,7 @@
           pos.floor.name,
           pos.row.name,
           pos.rack.name,
-          d.loc.kind === 'side' ? `Side V${d.loc.at + 1}` : M.formatPosition(project, d.loc, d.type, d.height).replace('–', '-'),
+          positionText(project, d),
           M.deviceHeight(project, d),
           type.label,
           d.name,
@@ -277,7 +423,7 @@
           .concat([M.powerOf(project, d), M.weightOf(project, d), d.notes || ''])
       );
     }
-    return rows.map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
+    return csvText(rows);
   }
 
   /** Splits CSV text into rows of cells. Detects comma, semicolon or tab separators. */
@@ -314,9 +460,9 @@
       row.push(cell);
       rows.push(row);
     }
-    // Undo the formula guard csvCell adds.
+    // Undo the formula guard csvCell adds: one apostrophe.
     return rows
-      .map((r) => r.map((v) => (/^'[=+\-@\t\r]/.test(v) ? v.slice(1) : v)))
+      .map((r) => r.map((v) => (/^'+[=+\-@\t\r]/.test(v) ? v.slice(1) : v)))
       .filter((r) => r.some((v) => v.trim() !== ''));
   }
 
@@ -463,6 +609,318 @@
     return { project: result.project, warnings: warnings.concat(result.warnings), added };
   }
 
+  // --------------------------------------------------------- cable CSVs
+
+  const CABLE_CSV_COLUMNS = ['Label', 'Network', 'Cable type', 'Length (m)', 'Length', 'Leg']
+    .concat(['A', 'B'].reduce((out, s) => out.concat(['floor', 'row', 'rack', 'position', 'device', 'port', 'transceiver'].map((k) => `${s} ${k}`)), []))
+    .concat(['Speed', 'Checks', 'Notes']);
+  // Picked types and transceivers are marked, so that reading the schedule back picks them again.
+  const AUTO = ' (auto)';
+
+  /**
+   * The cable schedule: one line per cable (per leg for breakouts, with
+   * Leg "1/2"), with both ends' places, the type and length, whether the
+   * length is estimated or set, the speed and the checks.
+   */
+  function exportCablesCSV(project, cables) {
+    const C = cabling();
+    const ctx = C.context(project);
+    const racks = new Map(M.allRacks(project).map((r) => [r.rack.id, r]));
+    const rows = [CABLE_CSV_COLUMNS];
+    const place = (e) => {
+      const d = e && ctx.devices.get(e.device);
+      if (!d) return ['', '', '', '', '', ''];
+      const pos = racks.get(d.loc.rack);
+      return [pos.floor.name, pos.row.name, pos.rack.name, positionText(project, d), d.name, e.port];
+    };
+    const optics = (end, t) => (t ? (end.transceiver ? t.name : t.name + AUTO) : '');
+    for (const c of cables || project.cables) {
+      const d = C.describe(project, c, ctx);
+      const net = M.networkById(project, c.network);
+      const type = d.type ? d.type.name + (c.type ? '' : AUTO) : '';
+      const head = d.ends.find((e) => e.role === 'a');
+      const legs = M.legsOf(c);
+      legs.forEach((leg, i) => {
+        const far = leg && d.ends.find((e) => e.role === 'b' && (e.leg === null ? 0 : e.leg) === i);
+        rows.push(
+          [c.label, net ? net.name : '', type, d.lengthM === null ? '' : d.lengthM, d.lengthAuto ? 'estimated' : 'set', Array.isArray(c.b) ? `${i + 1}/${legs.length}` : '']
+            .concat(place(c.a), [optics(c.a, head && head.transceiver)])
+            .concat(place(leg), [far ? optics(leg, far.transceiver) : ''])
+            .concat([C.fmtSpeed(d.legSpeedsGbps[i]), d.issues.map((x) => x.short).join('; '), c.notes || ''])
+        );
+      });
+    }
+    return csvText(rows);
+  }
+
+  const CABLE_HEADERS = {
+    label: ['label', 'cable label', 'cable id', 'cable'],
+    network: ['network', 'vlan'],
+    // "Cable" comes last for the type, so that alone it is the label.
+    type: ['cable type', 'type', 'cable model', 'cable'],
+    lengthM: ['length (m)', 'length m', 'metres', 'meters', 'length (metres)', 'length (meters)', 'length in metres', 'length in meters', 'cable length', 'cable length (m)'],
+    // "Length" is the estimated/set column of exportCablesCSV, or metres when it holds numbers (see importCablesCSV).
+    lengthKind: ['length'],
+    leg: ['leg'],
+    aDevice: ['a device', 'from device', 'from'],
+    aPort: ['a port', 'from port'],
+    aFloor: ['a floor', 'from floor'],
+    aRow: ['a row', 'from row'],
+    aRack: ['a rack', 'from rack'],
+    aPosition: ['a position', 'from position'],
+    aTransceiver: ['a transceiver', 'from transceiver'],
+    bDevice: ['b device', 'to device', 'to'],
+    bPort: ['b port', 'to port'],
+    bFloor: ['b floor', 'to floor'],
+    bRow: ['b row', 'to row'],
+    bRack: ['b rack', 'to rack'],
+    bPosition: ['b position', 'to position'],
+    bTransceiver: ['b transceiver', 'to transceiver'],
+    notes: ['notes', 'note', 'comment', 'comments'],
+  };
+
+  /** "4.5", "4,5" (a decimal comma), "4.5 m" → 4.5; null when it is no length above 0. */
+  function readMetres(text) {
+    let t = String(text).trim().replace(/\s*m$/i, '');
+    if (/^\d+,\d+$/.test(t)) t = t.replace(',', '.');
+    const n = /^\d*\.?\d+$|^\d+\.$/.test(t) ? Number(t) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  /**
+   * Which column holds what: { label: 0, type: 2, … }. Aliases are tried
+   * in rank order over all keys, and a column fills one key only, so
+   * "Cable" is the label, or the type next to a "Label" or "Cable ID".
+   */
+  function cableColumns(header) {
+    const col = {};
+    const keys = header.map((h) => headerKey(String(h == null ? '' : h)));
+    const used = new Set();
+    const ranks = Math.max(...Object.values(CABLE_HEADERS).map((a) => a.length));
+    for (let rank = 0; rank < ranks; rank++) {
+      for (const [name, aliases] of Object.entries(CABLE_HEADERS)) {
+        if (col[name] !== undefined || rank >= aliases.length) continue;
+        const i = keys.findIndex((k, j) => !used.has(j) && k === headerKey(aliases[rank]));
+        if (i < 0) continue;
+        col[name] = i;
+        used.add(i);
+      }
+    }
+    return col;
+  }
+
+  /** True when CSV text is a cable schedule (it has A and B device columns) rather than a device inventory. */
+  function isCablesCSV(text) {
+    const rows = parseCSV(String(text || ''));
+    const col = rows.length ? cableColumns(rows[0]) : {};
+    return col.aDevice !== undefined && col.bDevice !== undefined && col.aPort !== undefined && col.bPort !== undefined;
+  }
+
+  /**
+   * Adds the cables of a cable schedule (the columns of exportCablesCSV;
+   * A and B device and port are required) to `project`, finding devices by
+   * name. Lines with the same label and A end form one breakout cable when
+   * they have a Leg like "1/2" or name a breakout type; legs without a Leg
+   * take the free legs in line order. A breakout takes its type, network,
+   * length and notes from its first line. Networks are created by name for
+   * the cables that are added; an empty cell, or "… (auto)" that is not a
+   * name in the catalog, leaves the type or transceiver to be picked.
+   * Returns { added, warnings }.
+   */
+  function importCablesCSV(project, text) {
+    const C = cabling();
+    const rows = parseCSV(text);
+    if (rows.length < 2) throw new Error('The CSV has no cables: it needs a header row and at least one cable.');
+    const col = cableColumns(rows[0]);
+    if (['aDevice', 'aPort', 'bDevice', 'bPort'].some((k) => col[k] === undefined)) throw new Error('The CSV needs “A device”, “A port”, “B device” and “B port” columns.');
+    const warnings = [];
+    const lower = (v) => String(v || '').trim().toLowerCase();
+    const get = (r, k) => (col[k] === undefined ? '' : String(r[col[k]] == null ? '' : r[col[k]]).trim());
+    // A plain "Length" column without a metres one holds metres when it holds anything but "estimated" and "set".
+    if (col.lengthM === undefined && col.lengthKind !== undefined && rows.slice(1).some((r) => !['', 'estimated', 'set'].includes(lower(get(r, 'lengthKind'))))) {
+      col.lengthM = col.lengthKind;
+      delete col.lengthKind;
+    }
+    const byName = new Map();
+    for (const d of M.sortedDevices(project)) {
+      const k = lower(d.name);
+      if (!byName.has(k)) byName.set(k, []);
+      byName.get(k).push(d);
+    }
+    const racks = new Map(M.allRacks(project).map((r) => [r.rack.id, r]));
+    const places = {
+      floor: (d) => racks.get(d.loc.rack).floor.name,
+      row: (d) => racks.get(d.loc.rack).row.name,
+      rack: (d) => racks.get(d.loc.rack).rack.name,
+      position: (d) => positionText(project, d),
+    };
+    const samePlace = (x, y) => lower(x).replace(/\s+/g, '').replace(/–/g, '-') === lower(y).replace(/\s+/g, '').replace(/–/g, '-');
+    /**
+     * The device a line's end names: { device } when one device has the
+     * name in the place the line gives (its floor, row, rack and position,
+     * where given; the name as written before another case), with `off` the
+     * part of the place no such device is in; { many } when that leaves
+     * more than one.
+     */
+    const findDevice = (row, side) => {
+      const name = get(row, `${side}Device`);
+      let list = byName.get(lower(name)) || [];
+      let off = null;
+      for (const [k, at] of Object.entries(places)) {
+        const v = get(row, side + k[0].toUpperCase() + k.slice(1));
+        if (!v || !list.length) continue;
+        const here = list.filter((d) => samePlace(at(d), v));
+        if (here.length) list = here;
+        else off = off || `${k} ${v}`;
+      }
+      const exact = list.filter((d) => d.name === name);
+      if (exact.length) list = exact;
+      return list.length > 1 ? { many: list.length } : { device: list[0] || null, off };
+    };
+    // By name as written, then by name in any case, then by id: an entry's name wins over another one's id.
+    const findIn = (list, v) => {
+      for (const same of [(x) => x.name === v, (x) => lower(x.name) === lower(v), (x) => x.id === v, (x) => lower(x.id) === lower(v)]) {
+        const hit = list.find(same);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    // { auto: true } to pick, else { item } (null when the catalog has no such entry).
+    const lookup = (list, v) => {
+      if (!v) return { auto: true };
+      const item = findIn(list, v);
+      return item || !lower(v).endsWith(AUTO.trim()) ? { item } : { auto: true };
+    };
+
+    // Lines become cables: { line, rows, lines, at }, breakout legs gathered under their head.
+    const cables = [];
+    const breakouts = new Map();
+    rows.slice(1).forEach((r, i) => {
+      const line = i + 2;
+      const leg = /^(\d+)\s*\/\s*(\d+)$/.exec(get(r, 'leg'));
+      const type = lookup(project.cableTypes, get(r, 'type')).item;
+      if (!leg && !(type && type.legs > 1)) return void cables.push({ line, rows: [r], lines: [line], at: null });
+      const key = [get(r, 'label'), get(r, 'aFloor'), get(r, 'aRow'), get(r, 'aRack'), get(r, 'aDevice'), get(r, 'aPort')].map(lower).join('\u0000');
+      let c = breakouts.get(key);
+      if (!c) {
+        breakouts.set(key, (c = { line, rows: [], lines: [], at: [], totals: [] }));
+        cables.push(c);
+      }
+      c.rows.push(r);
+      c.lines.push(line);
+      c.at.push(leg ? parseInt(leg[1], 10) - 1 : null);
+      c.totals.push(leg ? parseInt(leg[2], 10) : null);
+    });
+
+    // Labels given further down the file are taken too, so that a line without one doesn't get theirs.
+    const given = new Set(rows.slice(1).map((r) => get(r, 'label').slice(0, 40).trim()).filter(Boolean));
+    const many = C.connector(project, given);
+    let added = 0;
+    for (const c of cables) {
+      const r = c.rows[0];
+      const label = get(r, 'label').slice(0, 40);
+      const what = label ? `cable ${label}` : `line ${c.line}`;
+      const skip = (why) => void warnings.push(`Skipped ${what}: ${why}.`);
+      let problem = null;
+      const notes = [];
+      const end = (row, side) => {
+        const name = get(row, `${side}Device`);
+        const port = get(row, `${side}Port`);
+        if (!name && !port) return null;
+        const found = findDevice(row, side);
+        const d = found.device;
+        if (found.many) problem = problem || `${found.many} devices are named ${name}: give their floor, row and rack`;
+        else if (!d) problem = problem || `there is no device ${name || 'without a name'}`;
+        else if (found.off) notes.push(`${d.name} is not in ${found.off}, so it is the one in rack ${places.rack(d)}`);
+        const e = { device: d ? d.id : '', port };
+        const tr = get(row, `${side}Transceiver`);
+        const t = lookup(project.transceivers, tr);
+        if (t.item) e.transceiver = t.item.id;
+        else if (!t.auto) problem = problem || `unknown transceiver “${tr}”`;
+        return e;
+      };
+      const typeText = get(r, 'type');
+      const found = lookup(project.cableTypes, typeText);
+      const type = found.item;
+      if (!found.auto && !type) {
+        skip(`unknown cable type “${typeText}”`);
+        continue;
+      }
+      const a = end(r, 'a');
+      let b;
+      if (c.at) {
+        // The legs: as many as the first Leg says, else as the type has, else one per line.
+        const total = c.totals.find((n) => n !== null);
+        const legs = total !== undefined ? total : type && type.legs > 1 ? type.legs : c.rows.length;
+        if (type && type.legs > 1 && legs !== type.legs) {
+          skip(`${type.name} has ${type.legs} legs, not ${legs}`);
+          continue;
+        }
+        if (legs > L.legs) {
+          skip(`a breakout cable has at most ${L.legs} legs, not ${legs}`);
+          continue;
+        }
+        b = Array.from({ length: legs }, () => null);
+        const place = (k, at) => {
+          const leg = `line ${c.lines[k]}`;
+          if (at < 0 || at >= legs) return void warnings.push(`Skipped ${leg} of ${what}: leg ${at + 1} is not one of its ${legs} legs.`);
+          if (b[at]) return void warnings.push(`Skipped ${leg} of ${what}: leg ${at + 1} is given twice.`);
+          if (c.totals[k] !== null && c.totals[k] !== legs) warnings.push(`${leg[0].toUpperCase()}${leg.slice(1)} of ${what} says ${c.totals[k]} legs, not ${legs}.`);
+          b[at] = end(c.rows[k], 'b');
+        };
+        c.rows.forEach((row, k) => c.at[k] !== null && place(k, c.at[k]));
+        c.rows.forEach((row, k) => {
+          if (c.at[k] !== null) return;
+          const free = b.findIndex((e) => !e);
+          if (free < 0) warnings.push(`Skipped line ${c.lines[k]} of ${what}: its ${legs} legs are taken.`);
+          else place(k, free);
+        });
+      } else b = end(r, 'b');
+      if (problem) {
+        skip(problem);
+        continue;
+      }
+      const props = { a, b, type: type ? type.id : null, label, notes: get(r, 'notes') };
+      // Checked before its network is created, so that a cable left out leaves nothing behind.
+      const refused = many.check(props);
+      if (refused) {
+        skip(refused);
+        continue;
+      }
+      // Cut to the length the plan keeps, so later lines find the network an earlier one created.
+      const netName = get(r, 'network').slice(0, 60).trim();
+      let network = netName ? findIn(project.networks, netName) : null;
+      if (netName && !network) {
+        network = C.addNetwork(project, { name: netName });
+        if (!network) warnings.push(`${label ? `Cable ${label}` : `Line ${c.line}`}: a plan holds ${L.networks} networks, so it has none.`);
+      }
+      const metres = get(r, 'lengthM');
+      let lengthM = null;
+      if (metres !== '' && lower(get(r, 'lengthKind')) !== 'estimated') {
+        lengthM = readMetres(metres);
+        if (lengthM === null) notes.push(`its length “${metres}” is not a number of metres, so it is estimated`);
+      }
+      const result = many.add(Object.assign(props, { network: network ? network.id : null, lengthM }));
+      if (result.error) skip(result.error);
+      else {
+        added++;
+        for (const n of notes) warnings.push(`${label ? `Cable ${label}` : `Line ${c.line}`}: ${n}.`);
+      }
+    }
+    return { added, warnings };
+  }
+
+  /** The order list as CSV: stock cables by length, cables made to length, then transceivers. */
+  function exportOrderCSV(project, cables) {
+    const bom = cabling().billOfMaterials(project, cables);
+    const total = (l, n) => Math.round(l * n * 100) / 100;
+    const rows = [['Item', 'Kind', 'Length (m)', 'Count', 'Total (m)']];
+    for (const x of bom.cables) rows.push([x.type.name, 'Cable', x.lengthM, x.count, total(x.lengthM, x.count)]);
+    for (const x of bom.madeToLength) for (const l of x.lengths) rows.push([x.type.name, 'Cable, made to length', l.lengthM, l.count, total(l.lengthM, l.count)]);
+    for (const x of bom.transceivers) rows.push([x.transceiver.name, 'Transceiver', '', x.count, '']);
+    return csvText(rows);
+  }
+
   // ----------------------------------------------------------- share links
 
   function toBase64Url(bytes) {
@@ -515,6 +973,11 @@
     parseCSV,
     parsePosition,
     importCSV,
+    CABLE_CSV_COLUMNS,
+    exportCablesCSV,
+    isCablesCSV,
+    importCablesCSV,
+    exportOrderCSV,
     encodeShare,
     decodeShare,
   };
