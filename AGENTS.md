@@ -14,23 +14,36 @@ slots on the right), with rows hoverable/clickable and hover-synced with the
 
 **Cabling (schema v4):** plans carry networks, cable types, transceivers and
 cables (a cable joins a port of one device to a port of another; `b` is a
-list of legs for breakout cables). The viewer renders every cable run in
-network color: port → out to the rack's cable manager (copper/RJ45 heads
-down the left manager, everything else down the right — the 2D app's
-convention) → up → across the cable **tray** above the row (lanes offset
-per network) → down to the far port. Racks over budget still glow red.
-Hover a cable for a tooltip (label, network, ends, length); click it for a
-full inspector (type, estimated or set length, both ends with links, issues
-from `C.describe`). The selected/hovered cable gets a real 3D thickness
-(a tube highlight); selecting a cable keeps the racks it runs through
-solid. The rack **front view** (inspector elevation) draws the tray with a
+list of legs for breakout cables). The cable runs and the trays they climb
+are visible **only in cable mode** — a third camera mode (Orbit / Walk /
+**Cable**, `C` key, orbit-style camera) alongside the other modes. In
+cable mode you hover a cable for a tooltip (label, network, ends, length),
+and **clicking a cable selects it and rides it**: the orbit target is
+dragged along the run's first leg (ease-in-out, 0.35 m/s, capped at
+12 s) while a compact **detail card** (`#cableCard`) hangs to the right of
+the camera's ride point — network chip, both ends, type, length, and the
+`C.describe` issues; clicking the same cable again rides it back,
+dragging the camera or Esc/a click elsewhere stops the ride. Cables are
+also click-inspectable as before: the full inspector (type, estimated or
+set length, both ends with links, issues from `C.describe`) opens, and the
+selected/hovered cable gets a real 3D thickness (a tube highlight);
+selecting a cable keeps the racks it runs through solid.
+Every cable run renders in network color: port → out to the rack's cable
+manager (copper/RJ45 heads down the left manager, everything else down the
+right — the 2D app's convention) → up → across the cable **tray** above
+the row (lanes offset per network) → down to the far port. A same-rack
+pair on the **same face** skips the tray entirely: a sagging Bézier **patch
+cable** dangles from port to port in front of (behind) the panels. A
+cross-floor run climbs a **riser** outside the floor slabs, crosses above
+the highest tray, and drops into the far row. Racks over budget still glow
+red. The rack **front view** (inspector elevation) draws the tray with a
 lane per network, the real ports of every device (cabled ones in their
 network's color), and the cable runs — solid for front-side ports, dashed
 where a run comes from the rear, exiting the sheet edge for far ends in
 other racks; runs are hoverable/clickable and hover-synced with the 3D
-view. A “Cables” toolbar button toggles cable visibility. The row view
-shows only the cables that run entirely inside the open row, and only that
-row's tray.
+view. The row view shows only the cables that run entirely inside the open
+row, and only that row's tray; cable mode composes with the row view
+(in-row runs + trays, no riding — the ortho camera owns the framing).
 
 There is also a **rack row view** camera mode: double-click a rack or
 device (or the big “Enter row mode” button, shown while a rack or one of
@@ -72,7 +85,14 @@ space is translucent. Each rack shows a panel sprite at the bottom front
 of the cabinet (rack name + the three usage bars: energy/weight/units)
 plus a vertical name tag — one letter per line — running down the
 front-left of the cabinet; nothing is hidden per-rack in the row view —
-the floating header is an HTML overlay only.
+the floating header is an HTML overlay only. The **front faceplates** —
+the 2D app's device faces (`faceSVG` per `face` style: ports, bays, fans,
+PDUs…) rasterized as a texture over a light metal base — appear on every
+bay device **only in the row view**, behind the **“Front panels” checkbox
+in the left-side nav** (on by default): one non-pickable `InstancedMesh`
+per device type, a thin plate 9–15 mm proud of the device's face (in front
+of the lit cluster-color strip, which is what other modes show), flipped
+for rows facing −z so the texture reads left-to-right from the front.
 
 Selection focus: clicking a rack (or a device/reservation inside one) keeps
 that rack fully solid and drops every other rack to 10% opacity (the row
@@ -181,8 +201,9 @@ Rules that matter for rendering:
 - Optional device fields are omitted when empty; a minimal device is
   `{ id, type, name, cluster, loc }`.
 - `deviceTypes[].face` is a drawing style: `rj45, qsfp, compute, storage,
-  jbod, gpu, patch, pdu, ups, blank, generic` (3D uses it for nothing yet —
-  color comes from the cluster).
+  jbod, gpu, patch, pdu, ups, blank, generic`. 3D uses it for the row
+  view's faceplate textures (`faceSVG` in `app.js`); the device body color
+  comes from the cluster.
 - Legacy versions: v1 counted units from the **bottom**; v1/v2 had a flat
   rack list (becomes one row); v3 has no cabling (networks, cable types and
   cables come out empty). `IO.normalizeProject` upgrades all of it to v4 and
@@ -219,12 +240,16 @@ The plan has no physical coordinates, so these are derived (meters):
   side slots); a device at `at` with height `h` has its center at
   `topY − (at − 1 + h/2) × U`.
 - Side slots: a 19″ device on its side — 1 U wide × 12 U tall (the slot's
-  run) — mounted on the right side as seen from the front. Slot *s* of a
-  rack with *n* slots sits `gap + s × (12 U + gap)` below the rack top,
-  `gap = (units − n × 12 U) / (n + 1)` — the 2D app's even distribution
-  (`L.sideSlotTop`). The rack's side shows a dark channel strip (19″ bay
-  edge to cabinet edge) with a slot box per slot; empty slots are visible
-  in 3D and as dashed boxes in the elevation.
+  run) — mounted on the right side as seen from the front, **outer face
+  flush with the side panel's inner face** (its ports sit on that face).
+  Slot *s* of a rack with *n* slots sits `gap + s × (12 U + gap)` below
+  the rack top, `gap = (units − n × 12 U) / (n + 1)` — the 2D app's even
+  distribution (`L.sideSlotTop`). The rack's side shows a dark channel
+  strip (19″ bay edge to cabinet edge) with a slot box per slot; empty
+  slots are visible in 3D and as dashed boxes in the elevation. The strip
+  is **cut around the occupied slots** in the row view and in cable mode
+  (`writeChannelSeg` writes one segment per remaining run), so a vertical
+  unit reads cleanly from the front instead of sitting behind the strip.
 - Racks in a row stand side by side (0.70 m pitch — a 10 cm gap, `PITCH`),
   centered on x. Rows are stacked along z with the floor's `rowPitchM`
   aisle (default `M.DEFAULT_ROW_PITCH_M`, 3 m) and **alternating fronts**
@@ -233,12 +258,23 @@ The plan has no physical coordinates, so these are derived (meters):
   0.02` (the rack's `trayM` is the manager height above its top, from the
   rack/rack type, `M.rackTrayM`). `L.routes(project, layout)` computes the
   world-space polyline of every cable run: port → out to the rack's cable
-  manager (copper — an RJ45 head — down the left manager, everything else
-  down the right, as seen from the port's side; side devices always the
-  right one) → up → across the tray (the lane is offset per network,
-  `L.netLaneOffset`) → down to the far port. A same-rack pair on the same
-  lane goes straight down the shared lane, no tray. The layout's `ports`
-  map sends `"deviceId|port"` to a world position.
+  **manager lane** (copper — an RJ45 head — down the left manager,
+  everything else down the right, as seen from the port's side; a front
+  port's lane stands **in the aisle, 12 cm in front of the cabinet** —
+  inside the front there is no clear vertical — while a rear port's lane
+  stands 12 cm in front of the back wall; a side port's lane hugs the side
+  panel's inner face, 10 cm in front of the slot for front ports) → up →
+  across the tray (the lane is offset per network, `L.netLaneOffset`) →
+  down to the far port. Same rack, same face: a sagging **Bézier patch
+  cable** (17 samples, the curve starts 5 mm proud of the face) instead.
+  Same rack, same lane, different face: straight down the shared lane, no
+  tray. **Between floors**: up, out to a riser outside the widest floor
+  slab (`slab.w/2 + 0.7`), across above the highest tray in the plan
+  (`+0.45`), and down into the far row — a straight run would cut through
+  the intermediate racks. The layout's `ports` map sends
+  `"deviceId|port"` to a world position. The cabinet's top and bottom
+  rails sit in the 6 cm frame gaps (clear of the top/bottom devices), so
+  front-port stubs at the extreme units have clear air to the aisle lane.
 - Rack numbering reads **left → right as seen from the row's front**: rows
   facing −z get their x assignment mirrored (`order = n − 1 − k`), so the
   row view, its wheel paging and the rack slider all run left → right for
@@ -259,12 +295,14 @@ js/cabling.js         UPSTREAM (CC0), cabling: ports, cables, networks,
 js/layout.js          plan → physical positions + cable routes
                       (pure, DOM-free, Node-testable)
 js/app.js             the ES module: three.js scene, instanced rendering,
-                      orbit + walk + ortho row-view cameras,
+                      orbit + walk + cable + ortho row-view cameras,
                       raycast hover/click, cable runs (fillCables /
-                      updateCableHighlight), inspector incl. the SVG rack
-                      elevation with tray + cable runs
-                      (faceSVG / elevationSVG) and the row-view label
-                      overlay (buildRackOverlay / updateOverlay)
+                      updateCableHighlight) + cable-mode follow and the
+                      detail card (startCableFollow / updateCableCard),
+                      row-view faceplates (makeFaceTexture / writePlate),
+                      inspector incl. the SVG rack elevation with tray +
+                      cable runs (faceSVG / elevationSVG) and the row-view
+                      label overlay (buildRackOverlay / updateOverlay)
 vendor/three          Three.js r170, the only runtime dependency (submodule)
 plans/example.json    the built-in example plan, exported as a file
 plans/example-big.json  the “Big example” (2 × 16 racks, 306 devices, no
@@ -273,13 +311,16 @@ plans/example-big.json  the “Big example” (2 × 16 racks, 306 devices, no
 
 Rendering uses `InstancedMesh` (one per part: rack frames 12 boxes/rack —
 closed cabinet: plinth, 4 posts, 4 rails, back panel, 2 side panels —
-side channel strips, slot boxes per side slot, device bodies, lit face
-strips, side devices, reserved, soft red over-budget glow shells; each
+side channel strips (segmented around occupied slots in the row/cable
+views), slot boxes per side slot, device bodies, lit face strips, face
+plates (row view only, one mesh per device type, textured — see above),
+side devices, reserved, soft red over-budget glow shells; each structural
 part has a solid + ghost pair for selection focus), cable trays (one box
-per row) and the cable runs — every leg of every cable in **one
-`LineSegments`** with vertex colors per network (`world.cables`; the
-visible subset is the draw range, dimming is written into the colors by
-`fillCables`). The hovered/selected cable additionally gets a real 3D
+per row, **visible in cable mode only**) and the cable runs — every leg of
+every cable in **one `LineSegments`** with vertex colors per network
+(`world.cables`; the draw range is 0 outside cable mode, dimming is
+written into the colors by `fillCables`). The hovered/selected cable
+additionally gets a real 3D
 thickness: `TubeGeometry` highlights (CatmullRom through the route points)
 rebuilt in `updateCableHighlight`, white undercoat when selected. Cables
 are pickable too — `hit.index / 2` maps back to the cable through
@@ -307,7 +348,8 @@ asynchronous, without the snap the camera would "move" forever. The hover
 raycast (a full pick over every instance mesh — the most expensive
 per-frame work) runs only when the pointer or the camera moved: pointer
 moves raycast same-frame, camera-only movement on alternate frames
-(30 Hz), and hover is suppressed entirely while dragging. Render
+(30 Hz), and hover is suppressed entirely while dragging or while the
+camera rides a cable. Render
 resolution is **adaptive**: after a 2 s warm-up the average frame time is
 checked every ~50 frames and the pixel ratio steps in 0.25 increments
 (down above ~22 ms/frame, up below ~16 ms), capped at

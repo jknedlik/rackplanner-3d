@@ -132,9 +132,13 @@
         side = true;
         const s = d.loc.at;
         const top = re.topY - sideSlotTop(re.units, s, re.rackType.sideSlots);
-        // Right side as seen from the front (screen-right in the 3D front view,
-        // like the 2D elevation): +x for fronts facing +z, -x for -z.
-        pos = [re.x + (re.dir === 1 ? 1 : -1) * (re.w / 2 - 0.035), top - SIDE_LEN / 2, re.z + re.dir * 0.25];
+        // Right side as seen from the front (screen-right in the 3D front
+        // view, like the 2D elevation): +x for fronts facing +z, -x for -z.
+        // The slot sits in the channel between the 19" bay and the cabinet
+        // wall, outer face flush with the side panel's inner face — the
+        // device (and the cables out of its ports) must never enter the
+        // wall.
+        pos = [re.x + (re.dir === 1 ? 1 : -1) * (re.w / 2 - 0.025 - SIDE_W / 2), top - SIDE_LEN / 2, re.z + re.dir * 0.25];
         size = [SIDE_W, SIDE_LEN, 0.5];
       } else {
         // Units count from the top: `at` is the topmost unit filled.
@@ -233,21 +237,28 @@
   function endLane(at, copper) {
     const r = at.rack;
     // Side devices sit in the manager on their slot's side (the right one,
-    // seen from the front), whatever their lane's network asks for.
+    // seen from the front), whatever their lane's network asks for. The lane
+    // hugs the side panel's inner face — the device fills the channel out to
+    // that face, so its run can only climb alongside it. A front port's lane
+    // stands just in front of the slot's face (the port's stub must not cut
+    // through the vertical unit).
     if (at.dv.side) {
-      const z = at.face === 'front' ? r.frontZ - r.dir * 0.12 : r.backZ + r.dir * 0.12;
-      return { x: r.x + r.dir * (r.w / 2 - 0.06), z };
+      const z = at.face === 'front' ? r.frontZ - r.dir * 0.1 : r.backZ + r.dir * 0.12;
+      return { x: r.x + r.dir * (r.w / 2 - 0.025), z };
     }
     // Left, as seen from `at.face`: front seen from dir, rear seen from −dir.
+    // A front port's lane stands in the aisle, in front of the cabinet —
+    // inside the front there is no clear vertical (the rails and the side
+    // slots block it), and the run reads as a real patch panel.
     const leftSign = at.face === 'front' ? -r.dir : r.dir;
     const sideSign = copper ? leftSign : -leftSign;
     const x = r.x + sideSign * (r.w / 2 - 0.06);
-    const z = at.face === 'front' ? r.frontZ - r.dir * 0.12 : r.backZ + r.dir * 0.12;
+    const z = at.face === 'front' ? r.frontZ + r.dir * 0.12 : r.backZ + r.dir * 0.12;
     return { x, z };
   }
 
   /** The polyline of one cable's head to one of its far ends, in world points. */
-  function cableLeg(layout, project, cable, head, leg) {
+  function cableLeg(layout, project, cable, head, leg, high) {
     const A = layout.ports.get(`${head.device}|${head.port}`);
     const Bp = layout.ports.get(`${leg.device}|${leg.port}`);
     if (!A || !Bp) return null;
@@ -260,29 +271,80 @@
     const netOff = netLaneOffset(project, cable.network);
     const trayA = rowA.trayY + 0.015;
     const trayB = rowB.trayY + 0.015;
+    // From a port to its lane plane (and back): out from the face to the
+    // lane's z, across to the lane's x. Both lane planes (the rear one at
+    // the back wall, the front one in the aisle) are clear of the device, so
+    // the two-segment stub never cuts through it. A side port already sits
+    // on its lane (the panel face), so it just runs to the lane's z.
+    const toLane = (at, lane) => {
+      if (at.dv.side) return [[at.x, at.y, lane.z]];
+      return [[at.x, at.y, lane.z], [lane.x, at.y, lane.z]];
+    };
+    const fromLane = (at, lane) => {
+      if (at.dv.side) return [[at.x, at.y, at.z]];
+      return [[lane.x, at.y, at.z], [at.x, at.y, at.z]];
+    };
 
+    // Patch cable: both ends in the same rack, on the same face — a sagging
+    // curve in front of (behind) the panels, from port to port, the way a
+    // short cord dangles. The curve starts 5 mm proud of the face (the plug
+    // body), so it never grazes the device's shell. Side-slot devices keep
+    // the manager run.
+    if (A.rack === Bp.rack && A.face === Bp.face && !A.dv.side && !Bp.dv.side) {
+      const sgn = A.face === 'front' ? A.rack.dir : -A.rack.dir; // out of the face
+      const p0 = [A.x, A.y, A.z + sgn * 0.005];
+      const p3 = [Bp.x, Bp.y, Bp.z + sgn * 0.005];
+      const bulge = 0.045 + Math.min(0.1, Math.abs(Bp.x - A.x) * 0.4);
+      const sag = 0.012 + Math.min(0.06, Math.abs(Bp.y - A.y) * 0.25);
+      const p1 = [A.x, A.y - sag, A.z + sgn * bulge];
+      const p2 = [Bp.x, Bp.y - sag, Bp.z + sgn * bulge];
+      const out = [[A.x, A.y, A.z]];
+      for (let i = 0; i <= 16; i++) {
+        const t = i / 16, u = 1 - t;
+        const a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+        out.push([a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0], a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1], a * p0[2] + b * p1[2] + c * p2[2] + d * p3[2]]);
+      }
+      out.push([Bp.x, Bp.y, Bp.z]);
+      return out;
+    }
+    // Between floors: out to the tray, then up a riser outside every floor
+    // slab (high.riseX), across under the "ceiling" (high.y — above the
+    // highest tray in the plan), and down the far side. A straight run
+    // would cut through the racks of the floors in between.
+    if (A.rack.floor !== Bp.rack.floor) {
+      return [
+        [A.x, A.y, A.z],
+        ...toLane(A, la),
+        [la.x, trayA, la.z],
+        [la.x, trayA, rowA.z + netOff],
+        [high.riseX, trayA, rowA.z + netOff],
+        [high.riseX, high.y, rowA.z + netOff],
+        [high.riseX, high.y, rowB.z + netOff],
+        [high.riseX, trayB, rowB.z + netOff],
+        [lb.x, trayB, rowB.z + netOff],
+        [lb.x, trayB, lb.z],
+        [lb.x, Bp.y, lb.z],
+        ...fromLane(Bp, lb),
+      ];
+    }
     // Same rack, same lane: straight down the shared lane, no tray.
     if (A.rack === Bp.rack && Math.abs(la.x - lb.x) < 0.02 && la.z === lb.z) {
       return [
         [A.x, A.y, A.z],
-        [A.x, A.y, la.z],
-        [la.x, A.y, la.z],
+        ...toLane(A, la),
         [la.x, Bp.y, la.z],
-        [Bp.x, Bp.y, la.z],
-        [Bp.x, Bp.y, Bp.z],
+        ...fromLane(Bp, lb),
       ];
     }
     return [
       [A.x, A.y, A.z],
-      [A.x, A.y, la.z],
-      [la.x, A.y, la.z],
+      ...toLane(A, la),
       [la.x, trayA, la.z],
       [la.x, trayA, rowA.z + netOff],
       [lb.x, trayB, rowB.z + netOff],
       [lb.x, trayB, lb.z],
       [lb.x, Bp.y, lb.z],
-      [Bp.x, Bp.y, lb.z],
-      [Bp.x, Bp.y, Bp.z],
+      ...fromLane(Bp, lb),
     ];
   }
 
@@ -294,11 +356,19 @@
   function routes(project, layout) {
     layout = layout || compute(project);
     const out = [];
+    // The cross-floor riser: up outside the widest floor slab, across above
+    // the highest tray in the plan.
+    let riseX = 0, hiY = 0;
+    for (const f of layout.floors) {
+      riseX = Math.max(riseX, f.slab.w / 2);
+      for (const r of f.rows) hiY = Math.max(hiY, r.trayY);
+    }
+    const high = { y: hiY + 0.45, riseX: riseX + 0.7 };
     for (const c of project.cables || []) {
       if (!c.a) continue;
       const legs = (M.legsOf(c) || []).filter(Boolean);
       if (!legs.length) continue;
-      const path = legs.map((leg) => cableLeg(layout, project, c, c.a, leg)).filter(Boolean);
+      const path = legs.map((leg) => cableLeg(layout, project, c, c.a, leg, high)).filter(Boolean);
       if (path.length) out.push({ cable: c, legs: path });
     }
     return out;

@@ -114,6 +114,8 @@ let world = null; // { group, layout, pickables, pick, hover, sel, dvById }
 let hovered = null; // { kind, entry, pos, size }
 let selected = null;
 let rackView = null; // row view: { row, re, x, targetX, activeIdx, t, ... }
+let frontPanelsOn = true; // row view: the faceplate textures (left nav checkbox)
+let cableFollow = null; // cable mode: { id, m, d, d0, d1, t0, dur } — the camera riding legs[0]
 
 const view = {
   mode: 'orbit',
@@ -508,13 +510,28 @@ function buildWorld() {
   layout.racks.forEach((r, ri) => {
     for (let s = 0; s < r.rackType.sideSlots; s++) slotList.push({ r, ri, s });
   });
-  const [chanSolid, chanGhost] = mkPair(unit, new THREE.MeshStandardMaterial({ color: 0x232c3c, roughness: 0.9, metalness: 0.2 }), new THREE.MeshStandardMaterial({ color: 0x232c3c, roughness: 0.9, metalness: 0.2, ...GHOST }), layout.racks.length);
+  // The channel strip is cut around the occupied side slots in the row and
+  // cable views, so it can take up to (slots + 1) segments per rack.
+  let chanCap = 0;
+  layout.racks.forEach((r) => {
+    if (r.rackType.sideSlots) chanCap += r.rackType.sideSlots + 1;
+  });
+  const [chanSolid, chanGhost] = mkPair(unit, new THREE.MeshStandardMaterial({ color: 0x232c3c, roughness: 0.9, metalness: 0.2 }), new THREE.MeshStandardMaterial({ color: 0x232c3c, roughness: 0.9, metalness: 0.2, ...GHOST }), Math.max(1, chanCap));
   const [slotSolid, slotGhost] = mkPair(unit, new THREE.MeshStandardMaterial({ color: 0x141b28, roughness: 0.95, metalness: 0.1 }), new THREE.MeshStandardMaterial({ color: 0x141b28, roughness: 0.95, metalness: 0.1, ...GHOST }), Math.max(1, slotList.length));
 
   const devs = layout.devices;
   const nU = devs.filter((d) => !d.side && !d.reserved).length;
   const nS = devs.filter((d) => d.side && !d.reserved).length;
   const nR = devs.filter((d) => d.reserved).length;
+  // Which side slots are occupied, per rack — the channel strip is cut
+  // around them in the row and cable views (see fillAll).
+  const slotDev = new Map();
+  for (const dv of devs)
+    if (dv.side) {
+      const id = dv.rack.rack.id;
+      if (!slotDev.has(id)) slotDev.set(id, new Set());
+      slotDev.get(id).add(dv.d.loc.at);
+    }
   const [devSolid, devGhost] = mkPair(unit, new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.2 }), new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.2, ...GHOST }), nU);
   const [faceSolid, faceGhost] = mkPair(unit, new THREE.MeshBasicMaterial({ toneMapped: false }), new THREE.MeshBasicMaterial({ toneMapped: false, ...GHOST }), nU);
   const [sideSolid, sideGhost] = mkPair(unit, new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.2 }), new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.2, ...GHOST }), nS);
@@ -524,6 +541,35 @@ function buildWorld() {
     if (dv.reserved) pick.res.push(dv);
     else if (dv.side) pick.side.push(dv);
     else pick.dev.push(dv);
+  }
+
+  // Front faceplates: the 2D app's device faces (ports, bays, fans, …)
+  // rasterized as a texture, one instanced mesh per device type. They sit
+  // just proud of the device's face, in front of the colored strip, and are
+  // only shown in the row view (the "Front panels" checkbox). Chrome only:
+  // the pickable face strip and body sit right behind them.
+  const plateByType = new Map();
+  for (const dv of devs)
+    if (!dv.side && !dv.reserved) {
+      const e = plateByType.get(dv.type.id);
+      if (e) e.list.push(dv);
+      else plateByType.set(dv.type.id, { type: dv.type, list: [dv] });
+    }
+  const plates = [...plateByType.values()];
+  for (const p of plates) {
+    p.mesh = new THREE.InstancedMesh(unit, new THREE.MeshBasicMaterial({ color: 0xdfe7f0, toneMapped: false }), p.list.length);
+    p.mesh.count = 0;
+    p.mesh.userData.n = 0; // fresh fill cursor, like the other instance meshes
+    p.mesh.frustumCulled = false;
+    p.mesh.visible = false;
+    g.add(p.mesh);
+    for (const dv of p.list) dv.plate = p;
+    makeFaceTexture(p.type, (tex) => {
+      p.mesh.material.color.set(0xffffff);
+      p.mesh.material.map = tex;
+      p.mesh.material.needsUpdate = true;
+      needsRender = true;
+    });
   }
 
   // Over-budget racks glow red: a soft translucent shell around the cabinet
@@ -664,7 +710,8 @@ function buildWorld() {
     cableRacks,
     cableRouteById,
     cableHot: null, // cable ids that stay bright while a selection dims the rest
-    cableOn: true,
+    plates,
+    slotDev,
     pickables,
     instanced,
     focusId: null,
@@ -688,20 +735,43 @@ function writeFrame(im, j, r) {
   put(im, i++, r.x + px, r.y + h / 2, r.z - pz, 0.05, h, 0.05);
   put(im, i++, r.x - px, r.y + h / 2, r.z + pz, 0.05, h, 0.05);
   put(im, i++, r.x + px, r.y + h / 2, r.z + pz, 0.05, h, 0.05);
-  put(im, i++, r.x, r.y + h - 0.022, r.z + pz, w, 0.045, 0.05);
-  put(im, i++, r.x, r.y + h - 0.022, r.z - pz, w, 0.045, 0.05);
-  put(im, i++, r.x, r.y + L.BASE_H + 0.022, r.z + pz, w, 0.045, 0.05);
-  put(im, i++, r.x, r.y + L.BASE_H + 0.022, r.z - pz, w, 0.045, 0.05);
+  // Top and bottom rails sit in the 6 cm frame gaps, not over the top and
+  // bottom devices: their faces then have clear air in front of and behind
+  // them, so the front-port cable stubs can run out to the aisle lane.
+  put(im, i++, r.x, r.y + h - 0.0375, r.z + pz, w, 0.045, 0.05);
+  put(im, i++, r.x, r.y + h - 0.0375, r.z - pz, w, 0.045, 0.05);
+  put(im, i++, r.x, r.y + L.BASE_H / 2 - 0.0225, r.z + pz, w, 0.045, 0.05);
+  put(im, i++, r.x, r.y + L.BASE_H / 2 - 0.0225, r.z - pz, w, 0.045, 0.05);
   put(im, i++, r.x, r.y + L.BASE_H + (r.units * L.U) / 2, r.z - r.dir * (d / 2 - 0.015), w - 0.06, r.units * L.U, 0.02);
   // Side panels: the cabinet is closed, not an open frame.
   put(im, i++, r.x - (w / 2 - 0.0125), r.y + h / 2, r.z, 0.025, h, d - 0.1);
   put(im, i++, r.x + (w / 2 - 0.0125), r.y + h / 2, r.z, 0.025, h, d - 0.1);
 }
 
-/** Writes a rack's dark side channel strip (full unit height) into `im`. */
-function writeChannel(im, j, r) {
+/** Writes a rack's dark side channel strip, from y0 to y1, into `im`. */
+function writeChannelSeg(im, j, r, y0, y1) {
   const cw = r.w / 2 - 0.2413; // 19" bay edge to the cabinet edge
-  put(im, j, r.x + r.dir * (r.w / 2 - cw / 2), r.y + L.BASE_H + (r.units * L.U) / 2, r.z + r.dir * 0.476, cw, r.units * L.U, 0.012);
+  put(im, j, r.x + r.dir * (r.w / 2 - cw / 2), (y0 + y1) / 2, r.z + r.dir * 0.476, cw, y1 - y0, 0.012);
+}
+
+// Faceplate matrix temps (writePlate is called per device per fill).
+const _plm = new THREE.Matrix4();
+const _plq = new THREE.Quaternion();
+const _plp = new THREE.Vector3();
+const _pls = new THREE.Vector3();
+const _plUp = new THREE.Vector3(0, 1, 0);
+
+/**
+ * Writes one faceplate: a thin box 9–15 mm proud of the device's face (in
+ * front of the colored strip). Flipped 180° for rows facing −z, so the
+ * texture reads left-to-right from the row's front.
+ */
+function writePlate(im, j, dv) {
+  const dir = dv.rack.dir;
+  const face = dv.pos[2] + dir * (dv.size[2] / 2);
+  _plq.setFromAxisAngle(_plUp, dir === 1 ? 0 : Math.PI);
+  _plm.compose(_plp.set(dv.pos[0], dv.pos[1], face + dir * 0.012), _plq, _pls.set(dv.size[0] * 0.94, dv.size[1] * 0.92, 0.006));
+  im.setMatrixAt(j, _plm);
 }
 
 /** Writes a device body (or reserved block) into `im` at instance `j`. */
@@ -736,10 +806,29 @@ function fillAll() {
     for (let k = 0; k < FRAME_N; k++) im.userData.idx[j + k] = ri;
     if (solid) fs += FRAME_N; else fg += FRAME_N;
     if (r.rackType.sideSlots) {
+      // The strip runs the full unit height — cut where a vertical unit
+      // sits, so the unit reads from the front in the row and cable views.
+      const n = r.rackType.sideSlots;
+      const y0 = r.y + L.BASE_H;
+      const y1 = y0 + r.units * L.U;
+      const parts = [];
+      const cuts = (rackView || view.mode === 'cable') && W.slotDev.get(r.rack.id);
+      if (cuts && cuts.size) {
+        let cur = y0;
+        for (const s of [...cuts].sort((a, b) => a - b)) {
+          const top = r.topY - L.sideSlotTop(r.units, s, n);
+          const a = top - L.SIDE_LEN - 0.012, b = top + 0.012;
+          if (a > cur) parts.push([cur, a]);
+          cur = Math.max(cur, b);
+        }
+        if (cur < y1) parts.push([cur, y1]);
+      } else parts.push([y0, y1]);
       const cim = solid ? W.chanSolid : W.chanGhost;
-      const cj = solid ? cs++ : cg++;
-      writeChannel(cim, cj, r);
-      cim.userData.idx[cj] = ri;
+      for (const [sa, sb] of parts) {
+        const cj = solid ? cs++ : cg++;
+        writeChannelSeg(cim, cj, r, sa, sb);
+        cim.userData.idx[cj] = ri;
+      }
     }
   }
   W.frameSolid.count = fs;
@@ -749,6 +838,9 @@ function fillAll() {
 
   let ds = 0, dg = 0, ss = 0, sg = 0, rs = 0, rg = 0;
   let u = 0, s = 0, rv = 0;
+  // Faceplates: row view only, behind the "Front panels" checkbox.
+  const platesOn = !!rackView && frontPanelsOn;
+  for (const p of W.plates) p.mesh.userData.n = 0;
   for (const dv of W.layout.devices) {
     const solid = solidOf(dv.rack.rack.id);
     const side = dv.side;
@@ -777,6 +869,7 @@ function fillAll() {
         const fz = dv.pos[2] + dv.rack.dir * (dv.size[2] / 2 + 0.004);
         put(face, j, dv.pos[0], dv.pos[1], fz, dv.size[0] * 0.94, dv.size[1] * 0.9, 0.01);
         face.setColorAt(j, _c.set(dv.color).multiplyScalar(1.7));
+        if (platesOn && dv.plate) writePlate(dv.plate.mesh, dv.plate.mesh.userData.n++, dv);
       }
       const pi = side ? s : u;
       body.userData.idx[j] = pi;
@@ -789,6 +882,11 @@ function fillAll() {
   W.sideSolid.count = ss;   W.sideGhost.count = sg;
   W.sideFaceSolid.count = ss; W.sideFaceGhost.count = sg;
   W.resSolid.count = rs;    W.resGhost.count = rg;
+  for (const p of W.plates) {
+    p.mesh.count = p.mesh.userData.n;
+    p.mesh.visible = platesOn;
+    if (p.mesh.count) p.mesh.instanceMatrix.needsUpdate = true;
+  }
 
   // Slot boxes: dark insets for the empty slots (an occupied one sits
   // hidden behind its device).
@@ -799,7 +897,7 @@ function fillAll() {
     const im = solid ? W.slotSolid : W.slotGhost;
     const j = solid ? sls++ : slg++;
     put(im, j,
-      se.r.x + se.r.dir * (se.r.w / 2 - 0.035), // same center as the slot's device
+      se.r.x + se.r.dir * (se.r.w / 2 - 0.025 - L.SIDE_W / 2), // same center as the slot's device
       se.r.topY - L.sideSlotTop(se.r.units, se.s, se.r.rackType.sideSlots) - L.SIDE_LEN / 2,
       se.r.z + se.r.dir * 0.49,
       L.SIDE_W, L.SIDE_LEN, 0.012);
@@ -831,8 +929,9 @@ function fillAll() {
     const op = solidOf(id) ? 1 : hide ? 0 : 0.1;
     for (const spr of arr) spr.material.opacity = op;
   }
-  // Tray of the open row only (other rows are gone); always on otherwise.
-  for (const t of W.trays) t.visible = !hide || t.userData.row === rackView.row;
+  // Trays read with the cabling: visible in cable mode only (the open
+  // row's tray in the row view).
+  for (const t of W.trays) t.visible = view.mode === 'cable' && (!hide || t.userData.row === rackView.row);
   fillCables();
 }
 
@@ -871,6 +970,11 @@ function refreshCableHot() {
 function fillCables() {
   const W = world;
   if (!W.cableGeo) return;
+  if (view.mode !== 'cable') {
+    W.cableGeo.setDrawRange(0, 0);
+    clearCableHi();
+    return;
+  }
   const rowRacks = rackView ? new Set([...(W.keepSet || [])]) : null;
   const pos = W.cableGeo.attributes.position.array;
   const col = W.cableGeo.attributes.color.array;
@@ -936,7 +1040,7 @@ function updateCableHighlight() {
         ? hovered.entry.cable.id
         : null;
   const rt = id ? W.cableRouteById.get(id) : null;
-  if (!rt || !W.cableOn) return;
+  if (!rt || view.mode !== 'cable') return;
   const strong = !!(selected && selected.kind === 'cable' && selected.entry.cable.id === id);
   const col = cableColorOf(rt.cable);
   for (const leg of rt.legs) {
@@ -948,6 +1052,118 @@ function updateCableHighlight() {
     W.cableHi.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: col, toneMapped: false, transparent: true, opacity: strong ? 1 : 0.95, depthWrite: false })));
   }
   needsRender = true;
+}
+
+/* ----------------------------------------------- cable mode: follow + card */
+
+const cableCardEl = $('cableCard');
+const _cableV = new THREE.Vector3();
+
+/** Cumulative arc length at each point of a leg. */
+function legMetric(leg) {
+  const m = [0];
+  for (let i = 1; i < leg.length; i++)
+    m.push(m[i - 1] + Math.hypot(leg[i][0] - leg[i - 1][0], leg[i][1] - leg[i - 1][1], leg[i][2] - leg[i - 1][2]));
+  return m;
+}
+
+/** The point at arc length `d` along `leg` (its metric `m`). */
+function pointAtLeg(leg, m, d) {
+  if (!leg.length) return null;
+  if (d <= 0) return leg[0];
+  if (d >= m[m.length - 1]) return leg[leg.length - 1];
+  let i = 1;
+  while (m[i] < d) i++;
+  const t = (d - m[i - 1]) / (m[i] - m[i - 1] || 1);
+  const a = leg[i - 1], b = leg[i];
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+
+/**
+ * Ride a cable's first leg from one end to the other: the orbit target is
+ * dragged along the route (ease-in-out, 0.35 m/s). Clicking the same cable
+ * again reverses the trip from where the camera is.
+ */
+function startCableFollow(ent) {
+  const rt = world.cableRouteById.get(ent.entry.cable.id);
+  if (!rt || !rt.legs.length) return;
+  const leg = rt.legs[0];
+  const m = legMetric(leg);
+  const total = m[m.length - 1];
+  if (!total) return;
+  const same = cableFollow && cableFollow.id === rt.cable.id;
+  const d0 = same ? cableFollow.d : 0;
+  const d1 = same ? (cableFollow.d1 === 0 ? total : 0) : total;
+  if (d0 === d1) return;
+  cableFollow = { id: rt.cable.id, m, d: d0, d0, d1, t0: performance.now(), dur: clamp(total / 0.35, 1.5, 12) };
+  needsRender = true;
+}
+
+/** The detail card that hangs to the right of the followed/selected cable. */
+function cableCardHTML(rt) {
+  const c = rt.cable;
+  const dsc = C.describe(project, c);
+  const net = c.network ? M.networkById(project, c.network) : null;
+  const endHTML = (x) => {
+    const d = x.device;
+    if (!d) return `<span class="dim">${esc(x.end.device)} · ${esc(x.end.port)}</span>`;
+    const re = world.layout.rackBy.get(d.loc.rack);
+    return `<b>${esc(d.name)}</b><small>${re ? esc(rn(re.rack.name)) : '—'} · ${esc(x.end.port)}${x.face === 'rear' ? ' · rear' : ''}</small>`;
+  };
+  const len =
+    dsc.lengthM != null ? `${esc(C.fmtM(dsc.lengthM))}${dsc.lengthAuto ? ' est.' : ' (set)'}`
+    : dsc.needM != null ? `${esc(C.fmtM(dsc.needM))} needed`
+    : '';
+  const warn = dsc.issues.filter((i) => i.level === 'warn');
+  return `
+    <h3>${esc(c.label || 'Cable')}${net ? ` <span class="chip" style="background:${net.color}"></span>${esc(net.name)}` : ''}</h3>
+    <dl>
+      ${row('End A', endHTML(dsc.ends[0]))}
+      ${dsc.ends[1] ? row('End B', endHTML(dsc.ends[1])) : ''}
+      ${row('Type', dsc.type ? esc(dsc.type.name) : '')}
+      ${row('Length', len)}
+    </dl>
+    ${warn.length ? `<p class="cc-warn"><b class="over">${warn.map((i) => esc(i.short)).join(' · ')}</b></p>` : ''}`;
+}
+
+/**
+ * Positions (or hides) the cable card. It follows the camera's ride point
+ * while following, and sits at the middle of the first leg while a cable is
+ * only selected — offset to the right of the run, clamped to the screen.
+ */
+function updateCableCard(cam) {
+  const on = world && view.mode === 'cable' && (cableFollow || (selected && selected.kind === 'cable'));
+  if (!on) {
+    cableCardEl.hidden = true;
+    return;
+  }
+  const id = cableFollow ? cableFollow.id : selected.entry.cable.id;
+  const rt = world.cableRouteById.get(id);
+  if (!rt || !rt.legs.length) {
+    cableCardEl.hidden = true;
+    return;
+  }
+  const leg = rt.legs[0];
+  let p;
+  if (cableFollow) p = pointAtLeg(leg, cableFollow.m, cableFollow.d);
+  else {
+    const m = legMetric(leg);
+    p = pointAtLeg(leg, m, m[m.length - 1] / 2); // mid of the first leg
+  }
+  if (!p) {
+    cableCardEl.hidden = true;
+    return;
+  }
+  _cableV.set(p[0], p[1], p[2]).project(cam);
+  if (_cableV.z > 1) {
+    cableCardEl.hidden = true;
+    return;
+  }
+  cableCardEl.hidden = false;
+  const x = clamp((_cableV.x * 0.5 + 0.5) * innerWidth + 34, 8, innerWidth - cableCardEl.offsetWidth - 8);
+  const y = clamp((-_cableV.y * 0.5 + 0.5) * innerHeight - 24, 56, innerHeight - cableCardEl.offsetHeight - 40);
+  cableCardEl.style.left = x + 'px';
+  cableCardEl.style.top = y + 'px';
 }
 
 function disposeWorld(w) {
@@ -1022,13 +1238,21 @@ function updateHover(cam) {
   else if (elCableHover) {
     const rt = world.cableRouteById.get(elCableHover);
     hovered = rt ? { kind: 'cable', entry: rt, box: null } : null;
-  } else if (dragging && dragMoved) hovered = null; // a real drag, not a click
+  } else if ((dragging && dragMoved) || cableFollow) hovered = null; // a real drag, or the camera riding a cable: no picking under a moving view
   else if (hoverDirty && (pointerDirty || (camRayAlt = !camRayAlt))) {
     raycaster.far = view.mode === 'walk' ? 14 : Infinity;
     raycaster.params.Line.threshold = view.mode === 'walk' ? 0.02 : 0.035;
     raycaster.setFromCamera(view.mode === 'walk' ? CENTER : pointer, cam);
     const hits = raycaster.intersectObjects(world.pickables, false);
-    hovered = hits.length ? pickEntity(hits[0]) : null;
+    // The cable lines only exist in cable mode: behind them, the rack or
+    // device under the pointer should still be picked.
+    let hit = null;
+    for (const h of hits) {
+      if (h.object === world.cables && view.mode !== 'cable') continue;
+      hit = h;
+      break;
+    }
+    hovered = hit ? pickEntity(hit) : null;
     hoverDirty = false;
   }
   pointerDirty = false; // consumed (it is only ever set together with hoverDirty)
@@ -1039,9 +1263,9 @@ function updateHover(cam) {
     : (view.mode === 'walk' ? 'w:' : 'o:') + (hovered.kind === 'device' || hovered.kind === 'reserved'
       ? 'd' + hovered.entry.d.id
       : hovered.kind === 'rack' ? 'r' + hovered.entry.rack.id : hovered.kind === 'cable' ? 'c' + hovered.entry.cable.id : 'f' + hovered.entry.floor.id);
-  // The orbit tooltip follows the cursor; everything else is static per
-  // hover entity, so an unchanged key means an unchanged frame.
-  const tipFollow = view.mode === 'orbit' && (pointerPx.x !== tipX || pointerPx.y !== tipY);
+  // The orbit/cable tooltip follows the cursor; everything else is static
+  // per hover entity, so an unchanged key means an unchanged frame.
+  const tipFollow = view.mode !== 'walk' && (pointerPx.x !== tipX || pointerPx.y !== tipY);
   if (key === hoverKey && !tipFollow) return;
   const changed = key !== hoverKey;
   hoverKey = key;
@@ -1101,7 +1325,7 @@ function updateHover(cam) {
     updateCableHighlight();
   }
   if (!hovered) return;
-  if (view.mode === 'orbit') {
+  if (view.mode !== 'walk') {
     if (tipMeasuredFor !== key) { tipMeasuredFor = key; tipW = tooltip.offsetWidth; tipH = tooltip.offsetHeight; }
     const x = clamp(pointerPx.x + 16, 8, innerWidth - tipW - 8);
     const y = clamp(pointerPx.y + 18, 8, innerHeight - tipH - 40);
@@ -1143,6 +1367,7 @@ function select(ent) {
   elevCables.clear();
   if (!ent) {
     inspector.hidden = true;
+    cableFollow = null; // nothing to ride
     if (!rackView && (world.focusId || world.focusRacks)) {
       world.focusId = null;
       world.focusRacks = null;
@@ -1154,6 +1379,16 @@ function select(ent) {
     return;
   }
   if (ent.kind === 'rack') openRackId = ent.entry.rack.id;
+  // A cable: the detail card follows it, and in cable mode the camera
+  // rides the run (clicking it again reverses). No riding in the row view —
+  // its ortho camera owns the framing.
+  if (ent.kind === 'cable') {
+    cableCardEl.innerHTML = cableCardHTML(ent.entry);
+    if (view.mode === 'cable' && !rackView) startCableFollow(ent);
+    else cableFollow = null;
+  } else if (cableFollow) {
+    cableFollow = null; // the selection left the cable
+  }
   // A cable keeps the racks it runs through solid.
   world.focusRacks = ent.kind === 'cable' ? world.cableRacks.get(ent.entry.cable.id) || null : null;
   inspBody.innerHTML =
@@ -1418,6 +1653,32 @@ function cableHit(deviceId, port) {
   return hit ? { cid: hit.cable.id, net: hit.cable.network || null } : null;
 }
 let cableIndexMap = new Map(); // "deviceId|port" → { cable }, rebuilt per elevation
+
+/**
+ * A device type's faceplate texture: its 2D face (faceSVG) over a light
+ * metal base, rasterized offscreen from an SVG data URL. Loaded async — the
+ * plate stays its plain color until the texture arrives.
+ */
+function makeFaceTexture(type, onReady) {
+  const W = 384; // 48 px per bay column — faceSVG caps ports at floor(w/8)
+  const H = Math.max(24, Math.round(type.height * 48)); // 48 px per U
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
+    `<rect width="${W}" height="${H}" fill="#dfe7f0"/>${faceSVG(type.face, W, H)}</svg>`;
+  const img = new Image();
+  img.onload = () => {
+    const cv = document.createElement('canvas');
+    cv.width = W;
+    cv.height = H;
+    cv.getContext('2d').drawImage(img, 0, 0);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    onReady(tex);
+  };
+  img.onerror = () => {}; // the plate stays its plain light color
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+}
 
 function faceSVG(face, w, h) {
   const s = [];
@@ -1719,6 +1980,7 @@ function setProject(p, source) {
   openRackId = null;
   elevRows.clear();
   elevCables.clear();
+  cableFollow = null; // the routes it rode are gone with the old world
   inspector.hidden = true;
   tooltip.hidden = true;
   syncEnterRowBtn();
@@ -1833,8 +2095,16 @@ function setMode(mode) {
   hoverDirty = true; // hover params differ per mode (crosshair vs pointer)
   $('orbitBtn').classList.toggle('active', mode === 'orbit');
   $('walkBtn').classList.toggle('active', mode === 'walk');
+  $('cableBtn').classList.toggle('active', mode === 'cable');
   crosshair.hidden = mode !== 'walk';
-  $('modeHint').textContent = mode === 'walk' ? 'WASD move · Shift run · E/Q up/down · mouse look · click inspect · Esc orbit' : 'drag rotate · wheel zoom · right-drag pan · click inspect · V walk';
+  $('modeHint').textContent =
+    mode === 'walk'
+      ? 'WASD move · Shift run · E/Q up/down · mouse look · click inspect · Esc orbit'
+      : mode === 'cable'
+        ? 'drag rotate · wheel zoom · click a cable to follow it · C for orbit'
+        : 'drag rotate · wheel zoom · right-drag pan · click inspect · V walk · C cables';
+  if (mode !== 'cable' && cableFollow) cableFollow = null; // no more visible cable to ride
+  if (world) fillAll(); // cable + faceplate visibility and the strip cuts depend on the mode
 }
 
 function toWalk() {
@@ -1865,6 +2135,12 @@ function toOrbit() {
   setMode('orbit');
 }
 
+/** Cable mode: orbit-style camera, but the cables are on and a click rides a cable. */
+function toCable() {
+  if (view.mode === 'walk') toOrbit();
+  setMode(view.mode === 'cable' ? 'orbit' : 'cable');
+}
+
 $('orbitBtn').addEventListener('click', () => {
   if (rackView) return toRowOrbit(); // orbit the row, stay in row mode
   if (view.mode !== 'orbit') toOrbit();
@@ -1881,15 +2157,10 @@ $('fadeBtn').addEventListener('click', () => {
     updateRowLabelsFade();
   }
 });
-$('cablesBtn').addEventListener('click', () => {
-  if (!world) return;
-  world.cableOn = !world.cableOn;
-  $('cablesBtn').classList.toggle('active', world.cableOn);
-  world.cables.visible = world.cableOn;
-  if (world.cableOn) updateCableHighlight();
-  else clearCableHi();
-  if (selected && selected.kind === 'cable' && !world.cableOn) select(null);
-  needsRender = true;
+$('cableBtn').addEventListener('click', () => toCable());
+$('panelChk').addEventListener('change', (e) => {
+  frontPanelsOn = e.target.checked;
+  if (world) fillAll(); // the faceplates appear/disappear
 });
 $('leaveRowBtn').addEventListener('click', () => exitRackView());
 // The big “Enter row mode” button — same spot and style as “Leave row
@@ -2164,8 +2435,12 @@ function enterRackView(re, flyDur = 0) {
   // headroom, always fits (a short window zooms out just enough).
   const h0 = canvas.clientHeight;
   const ppm = Math.min(ROW_PX_PER_M, (h0 * 0.94) / re.height);
-  view.mode = 'orbit';
-  setMode('orbit');
+  // The row view rides the orbit camera's parameters; only walk must give
+  // them up. Cable mode stays on — it just adds the runs to the same view.
+  if (view.mode === 'walk') {
+    view.mode = 'orbit';
+    setMode('orbit');
+  }
   const T2 = new THREE.Vector3(re.x, cy, re.z);
   let flyState = null;
   if (fly) {
@@ -2373,10 +2648,13 @@ canvas.addEventListener('pointermove', (e) => {
   pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   pointerDirty = true; // the hover must track the cursor this frame
   hoverDirty = true;
-  if (!dragging || view.mode !== 'orbit') return;
+  if (!dragging || (view.mode !== 'orbit' && view.mode !== 'cable')) return;
   const dx = e.clientX - dragging.x;
   const dy = e.clientY - dragging.y;
-  if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
+  if (Math.abs(dx) + Math.abs(dy) > 3) {
+    dragMoved = true;
+    if (cableFollow) cableFollow = null; // a drag takes over the camera
+  }
   // In the row view a plain click stays; an actual drag switches to a free
   // orbit around the row — row mode itself stays on.
   if (dragging.inRackView && rackView && rackView.cam === 'ortho' && dragMoved) toRowOrbit();
@@ -2402,16 +2680,16 @@ const endDrag = () => {
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
 canvas.addEventListener('click', (e) => {
-  if (view.mode !== 'orbit' || e.detail === 0 || dragMoved) return;
+  if ((view.mode !== 'orbit' && view.mode !== 'cable') || e.detail === 0 || dragMoved) return;
   // In the row view, clicking a rack/device smoothly switches to it.
-  if (rackView && hovered && hovered.kind !== 'floor') {
+  if (rackView && hovered && hovered.kind !== 'floor' && hovered.kind !== 'cable') {
     recenterOn(hovered.kind === 'rack' ? hovered.entry : hovered.entry.rack);
   }
   select(hovered); // the clicked entity itself wins (e.g. the device panel)
 });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('dblclick', () => {
-  if (view.mode !== 'orbit' || !hovered) return;
+  if (view.mode === 'walk' || !hovered || hovered.kind === 'cable') return;
   enterRackView(hovered.kind === 'rack' ? hovered.entry : hovered.entry.rack);
 });
 canvas.addEventListener('wheel', (e) => {
@@ -2451,6 +2729,10 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyV') {
     if (rackView) exitRackView();
     view.mode === 'walk' ? toOrbit() : toWalk();
+    return;
+  }
+  if (e.code === 'KeyC') {
+    toCable();
     return;
   }
   if (e.code === 'Escape') {
@@ -2572,6 +2854,25 @@ function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  // Cable follow: drag the orbit target along the route (ease-in-out). The
+  // orbit easing chases it, so the camera glides after the cable.
+  if (cableFollow && world) {
+    const fl = cableFollow;
+    const t = clamp((now - fl.t0) / (fl.dur * 1000), 0, 1);
+    const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    fl.d = fl.d0 + (fl.d1 - fl.d0) * e;
+    const rt = world.cableRouteById.get(fl.id);
+    const p = rt ? pointAtLeg(rt.legs[0], fl.m, fl.d) : null;
+    if (p) {
+      view.goal.set(p[0], p[1], p[2]);
+      if (view.goalR > 1.6) view.goalR = 1.6; // keep the run filling the view
+    }
+    if (t >= 1) {
+      cableFollow = null;
+      hoverDirty = true; // hover was suppressed during the ride — pick again
+      pointerDirty = true;
+    }
+  }
   let cam = camera;
   if (rackView) {
     if (rackView.cam === 'ortho') {
@@ -2587,6 +2888,7 @@ function frame(now) {
     if (rackView) overlayStale = true;
   }
   updateHover(cam);
+  updateCableCard(cam); // the detail card tracks the ride point (DOM, every frame)
   // Adaptive resolution: after a short warm-up, look at the average frame
   // time every ~50 frames and step the render scale down when it runs long
   // (≈45 fps) or back up when there is headroom (≈60 fps). It never goes

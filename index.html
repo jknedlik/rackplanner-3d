@@ -18,8 +18,8 @@
     <div id="modes" role="group" aria-label="Camera mode">
       <button id="orbitBtn" class="active">Orbit</button>
       <button id="walkBtn">Walk</button>
+      <button id="cableBtn" title="Cable mode: shows the cable runs — click one to follow it (C)">Cable</button>
       <button id="fadeBtn" class="active" title="Row view: fade device labels by distance from the centered rack">Fade</button>
-      <button id="cablesBtn" class="active" title="Show or hide the cable runs">Cables</button>
     </div>
     <div id="actions">
       <button id="loadBtn">Open plan…</button>
@@ -36,8 +36,9 @@
             <h3>Controls</h3>
             <p><b>Orbit:</b> drag to rotate · wheel to zoom · right-drag or Shift-drag to pan · click to inspect</p>
             <p><b>Walk:</b> W A S D to move · Shift to run · E / Q up and down · mouse to look · click to inspect</p>
+            <p><b>Cable:</b> the cable runs (and the trays they climb) are visible only in this mode · click a cable to select it and ride it from one end to the other — a card with its details hangs beside the run, and clicking it again rides it back · dragging takes the camera off the ride, and Esc or a click elsewhere stops it</p>
             <p><b>Rack row view:</b> double-click a rack or device (or the “Enter row mode” button, shown while a rack or one of its devices is selected) for a straight-on view of the whole row, with every device labeled · wheel scrolls from rack to rack · Shift+wheel (or pinch) zooms · click a rack to switch to it · drag (or the Orbit button) orbits around the row while row mode stays on · the big “Leave row mode” button or Esc exits · the Row / Rack sliders at the left jump between the floor's rows (keeping your rack column, with a camera flight whose length the Flight slider sets — 3 s by default) and between the racks of the open row · the Zoom slider sets the magnification (px per U) · the “Fade” toolbar button dims device labels by distance (on by default)</p>
-            <p><b>Common:</b> V toggles walk / orbit · Esc deselects (or leaves walking) · floor buttons jump between floors</p>
+            <p><b>Common:</b> V toggles walk / orbit · C toggles cable mode · Esc deselects (or leaves walking) · floor buttons jump between floors</p>
           </section>
         </div>
       </details>
@@ -47,6 +48,7 @@
   <div id="tooltip" hidden></div>
   <div id="crosshair" hidden aria-hidden="true"></div>
   <div id="rackOverlay" hidden aria-hidden="true"></div>
+  <div id="cableCard" hidden aria-hidden="true"></div>
   <button id="enterRowBtn" hidden>⌖ Enter row mode</button>
   <button id="leaveRowBtn" hidden>← Leave row mode</button>
   <aside id="rowNav" hidden aria-label="Row and rack navigation">
@@ -65,6 +67,10 @@
     <label>
       <span>Flight <b id="flightVal">3 s</b></span>
       <input type="range" id="flightSlider" min="1" max="10" step="0.5" value="3">
+    </label>
+    <label class="chk">
+      <span>Front panels</span>
+      <input type="checkbox" id="panelChk" checked>
     </label>
   </aside>
 
